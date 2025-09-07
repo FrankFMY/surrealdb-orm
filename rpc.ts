@@ -1,19 +1,25 @@
-import type { KEYS } from "@nemigo/helpers/types";
-import type { RecordBySchema } from "@helpers/types.js";
-import type { CreateRecordDataRPC, SurrealENV } from "./types.js";
-import type { Future } from "@nemigo/helpers/future";
-import type { ILogger } from "@server/logger/types.js";
-import { randID } from "@nemigo/helpers/random";
-import { exit } from "node:process";
-import WebSocket from "ws";
+import type { KEYS, RecordBySchema, Future, ILogger } from './helpers.js';
+import type { CreateRecordDataRPC, SurrealENV } from './types.js';
+import { randID } from './helpers.js';
+import { exit } from 'node:process';
+import WebSocket from 'ws';
 
 //...
 
-export type SurrealRPC_BulkCommand<DB, Table extends KEYS<DB>, Bulk extends boolean> = Bulk extends true
+export type SurrealRPC_BulkCommand<
+	DB,
+	Table extends KEYS<DB>,
+	Bulk extends boolean
+> = Bulk extends true
 	? { params: [Table]; return: RecordBySchema<DB, Table>[] }
 	: { params: [string]; return: RecordBySchema<DB, Table> | null };
 
-export interface SurrealRPC_Schema<DB, Table extends KEYS<DB>, Bulk extends boolean, Data = unknown> {
+export interface SurrealRPC_Schema<
+	DB,
+	Table extends KEYS<DB>,
+	Bulk extends boolean,
+	Data = unknown
+> {
 	ping: {
 		params: never[];
 		return: void;
@@ -77,10 +83,10 @@ export interface SurrealRPC_ResponseOK<
 	Table extends KEYS<DB>,
 	Bulk extends boolean,
 	Data,
-	Command extends KEYS<SurrealRPC_Schema<DB, Table, Bulk, Data>>,
+	Command extends KEYS<SurrealRPC_Schema<DB, Table, Bulk, Data>>
 > {
 	id: string;
-	result: SurrealRPC_Schema<DB, Table, Bulk, Data>[Command]["return"];
+	result: SurrealRPC_Schema<DB, Table, Bulk, Data>[Command]['return'];
 	error?: never;
 }
 
@@ -92,9 +98,17 @@ export interface SurrealRPC_ResponseERR {
 
 //...
 
-export type SurrealRPC_UnknownResponseOK<DB> = SurrealRPC_ResponseOK<DB, KEYS<DB>, boolean, any, KEYS<SurrealRPC_Schema<DB, KEYS<DB>, boolean>>>;
+export type SurrealRPC_UnknownResponseOK<DB> = SurrealRPC_ResponseOK<
+	DB,
+	KEYS<DB>,
+	boolean,
+	any,
+	KEYS<SurrealRPC_Schema<DB, KEYS<DB>, boolean>>
+>;
 
-export type SurrealRPC_UnknownResponse<DB> = SurrealRPC_UnknownResponseOK<DB> | SurrealRPC_ResponseERR;
+export type SurrealRPC_UnknownResponse<DB> =
+	| SurrealRPC_UnknownResponseOK<DB>
+	| SurrealRPC_ResponseERR;
 
 //...
 
@@ -125,12 +139,12 @@ export class SurrealRPC<DB> {
 		this.future = ctx.future;
 		this._env = { ...ctx.env };
 		this.meta = {
-			process: ctx.process ?? "SDB",
+			process: ctx.process ?? 'SDB',
 			isSERVER: ctx.isSERVER ?? false,
 		};
 	}
 
-	async use(dataspace: Partial<Omit<SurrealENV, "rpc">> = {}) {
+	async use(dataspace: Partial<Omit<SurrealENV, 'rpc'>> = {}) {
 		this._env = { ...this._env, ...dataspace };
 		await this.ping();
 		await this.customize();
@@ -165,27 +179,41 @@ DEFINE FUNCTION IF NOT EXISTS fn::upsert($record: object, $now: number) {
 	//...
 
 	private async ping() {
-		await this.send("ping", []);
-		await this.send("signin", [
+		await this.send('ping', []);
+		await this.send('signin', [
 			{
 				user: this.env.user,
 				pass: this.env.pass,
 			},
 		]);
-		await this.send("use", [this.env.namespace, this.env.database]);
-		await this.send("ping", []);
+		await this.send('use', [this.env.namespace, this.env.database]);
+		await this.send('ping', []);
 	}
 
-	async query<Data = unknown>(sql: string, vars?: Record<string, unknown>): Promise<{ result: Data }[]> {
+	async query<Data = unknown>(
+		sql: string,
+		vars?: Record<string, unknown>
+	): Promise<{ result: Data }[]> {
 		const method = `SQL - ${randID()}`;
 		this.logger.debug({ module: this.meta.process, method }, { sql, vars });
-		const params = (vars ? [sql, vars] : [sql]) as SurrealRPC_Schema<DB, KEYS<DB>, false, Data>["query"]["params"];
-		const response = await this.send<KEYS<DB>, false, Data, "query">("query", params);
+		const params = (vars ? [sql, vars] : [sql]) as SurrealRPC_Schema<
+			DB,
+			KEYS<DB>,
+			false,
+			Data
+		>['query']['params'];
+		const response = await this.send<KEYS<DB>, false, Data, 'query'>(
+			'query',
+			params
+		);
 		this.logger.debug({ module: this.meta.process, method }, response);
 		return response;
 	}
 
-	async run<Data = unknown>(sql: string, vars?: Record<string, unknown>): Promise<Data> {
+	async run<Data = unknown>(
+		sql: string,
+		vars?: Record<string, unknown>
+	): Promise<Data> {
 		const response = await this.query<Data>(sql, vars);
 		return response[0].result;
 	}
@@ -195,12 +223,18 @@ DEFINE FUNCTION IF NOT EXISTS fn::upsert($record: object, $now: number) {
 		const method = `SQL-RAW - ${randID()}`;
 		this.logger.debug({ module: this.meta.process, method }, { sql, vars });
 		// используем обычный query, он возвращает массив результатов
-		return this.send<KEYS<DB>, false, any, "query">("query", (vars ? [sql, vars] : [sql]) as any);
+		return this.send<KEYS<DB>, false, any, 'query'>(
+			'query',
+			(vars ? [sql, vars] : [sql]) as any
+		);
 	}
 
 	// Live queries
 	async live(table: string, diff = false) {
-		return this.send<KEYS<DB>, false, string, "live">("live", diff ? [table, true] : [table]);
+		return this.send<KEYS<DB>, false, string, 'live'>(
+			'live',
+			diff ? [table, true] : [table]
+		);
 	}
 
 	/** Запуск LIVE SELECT с произвольным WHERE */
@@ -211,29 +245,29 @@ DEFINE FUNCTION IF NOT EXISTS fn::upsert($record: object, $now: number) {
 	}
 
 	async kill(queryUuid: string) {
-		return this.send<KEYS<DB>, false, null, "kill">("kill", [queryUuid]);
+		return this.send<KEYS<DB>, false, null, 'kill'>('kill', [queryUuid]);
 	}
 
 	async transaction<Data = any>(arr: string[]): Promise<Data> {
 		return this.run<Data>(`
 RETURN {
 	LET $result = [];
-${arr.map((sql) => `$result = array::add($result, (${sql}))`).join(";\n")};
+${arr.map((sql) => `$result = array::add($result, (${sql}))`).join(';\n')};
 	RETURN $result;
 }`);
 	}
 
 	// ----- Transactions -----
 	async begin() {
-		await this.query("BEGIN TRANSACTION");
+		await this.query('BEGIN TRANSACTION');
 	}
 
 	async commit() {
-		await this.query("COMMIT TRANSACTION");
+		await this.query('COMMIT TRANSACTION');
 	}
 
 	async cancel() {
-		await this.query("CANCEL TRANSACTION");
+		await this.query('CANCEL TRANSACTION');
 	}
 
 	async withTransaction<T>(fn: () => Promise<T>): Promise<T> {
@@ -255,23 +289,46 @@ ${arr.map((sql) => `$result = array::add($result, (${sql}))`).join(";\n")};
 	private heap = new Map<
 		string,
 		{
-			resolver: (result: SurrealRPC_UnknownResponseOK<DB>["result"]) => void;
-			rejecter: (error: SurrealRPC_ResponseERR["error"]) => void;
+			resolver: (
+				result: SurrealRPC_UnknownResponseOK<DB>['result']
+			) => void;
+			rejecter: (error: SurrealRPC_ResponseERR['error']) => void;
 		}
 	>();
 
 	private liveSubscribers = new Map<
 		string,
-		Set<(payload: { action: "CLOSE" | "CREATE" | "UPDATE" | "DELETE"; id: string; result: unknown }) => void>
+		Set<
+			(payload: {
+				action: 'CLOSE' | 'CREATE' | 'UPDATE' | 'DELETE';
+				id: string;
+				result: unknown;
+			}) => void
+		>
 	>();
 
-	protected async send<Table extends KEYS<DB>, Bulk extends boolean, Data, Command extends KEYS<SurrealRPC_Schema<DB, Table, Bulk, Data>>>(
+	protected async send<
+		Table extends KEYS<DB>,
+		Bulk extends boolean,
+		Data,
+		Command extends KEYS<SurrealRPC_Schema<DB, Table, Bulk, Data>>
+	>(
 		cmd: Command,
-		params: SurrealRPC_Schema<DB, Table, Bulk, Data>[Command]["params"]
-	): Promise<SurrealRPC_Schema<DB, Table, Bulk, Data>[Command]["return"]> {
-		let resolver!: (result: SurrealRPC_ResponseOK<DB, Table, Bulk, Data, Command>["result"]) => void;
-		let rejecter!: (error: SurrealRPC_ResponseERR["error"]) => void;
-		const promise = new Promise<SurrealRPC_Schema<DB, Table, Bulk, Data>[Command]["return"]>((resolve, reject) => {
+		params: SurrealRPC_Schema<DB, Table, Bulk, Data>[Command]['params']
+	): Promise<SurrealRPC_Schema<DB, Table, Bulk, Data>[Command]['return']> {
+		let resolver!: (
+			result: SurrealRPC_ResponseOK<
+				DB,
+				Table,
+				Bulk,
+				Data,
+				Command
+			>['result']
+		) => void;
+		let rejecter!: (error: SurrealRPC_ResponseERR['error']) => void;
+		const promise = new Promise<
+			SurrealRPC_Schema<DB, Table, Bulk, Data>[Command]['return']
+		>((resolve, reject) => {
 			resolver = resolve;
 			rejecter = reject;
 		});
@@ -291,27 +348,33 @@ ${arr.map((sql) => `$result = array::add($result, (${sql}))`).join(";\n")};
 		this.ready = new Promise<void>((resolve) => (this.resolver = resolve));
 		this.ws = new WebSocket(this.env.rpc /*, "rpc" */);
 
-		this.ws.addEventListener("open", async () => {
+		this.ws.addEventListener('open', async () => {
 			await this.ping();
 			await this.customize();
-			this.future.run(() => this.ping().catch(() => {}), { type: "interval", key: this.meta.process });
+			this.future.run(() => this.ping().catch(() => {}), {
+				type: 'interval',
+				key: this.meta.process,
+			});
 			this.resolver();
 		});
 
-		this.ws.addEventListener("error", (error) => {
-			this.logger.error({ module: this.meta.process, method: "open" }, error);
+		this.ws.addEventListener('error', (error) => {
+			this.logger.error(
+				{ module: this.meta.process, method: 'open' },
+				error
+			);
 			// if (this.isSERVER)
 			return exit(1);
 			// this.open();
 		});
 
-		this.ws.addEventListener("close", () => {
-			this.future.clear("interval", this.meta.process);
+		this.ws.addEventListener('close', () => {
+			this.future.clear('interval', this.meta.process);
 			if (this.meta.isSERVER) return exit(1);
 			this.open();
 		});
 
-		this.ws.addEventListener("message", (e) => {
+		this.ws.addEventListener('message', (e) => {
 			const parsed = JSON.parse(e.data.toString());
 			// ответ на rpc с id
 			if (parsed && parsed.id) {
@@ -324,8 +387,17 @@ ${arr.map((sql) => `$result = array::add($result, (${sql}))`).join(";\n")};
 				return;
 			}
 			// live-уведомление без id
-			if (parsed && parsed.result && parsed.result.action && parsed.result.id) {
-				const payload = parsed.result as { action: "CLOSE" | "CREATE" | "UPDATE" | "DELETE"; id: string; result: unknown };
+			if (
+				parsed &&
+				parsed.result &&
+				parsed.result.action &&
+				parsed.result.id
+			) {
+				const payload = parsed.result as {
+					action: 'CLOSE' | 'CREATE' | 'UPDATE' | 'DELETE';
+					id: string;
+					result: unknown;
+				};
 				const subs = this.liveSubscribers.get(payload.id);
 				if (subs)
 					for (const cb of subs)
@@ -336,13 +408,20 @@ ${arr.map((sql) => `$result = array::add($result, (${sql}))`).join(";\n")};
 		});
 
 		this.ready.then(() => {
-			this.logger.good(this.meta.process, "connected");
+			this.logger.good(this.meta.process, 'connected');
 		});
 
 		return this.ready;
 	}
 
-	subscribeLive(queryUuid: string, cb: (payload: { action: "CLOSE" | "CREATE" | "UPDATE" | "DELETE"; id: string; result: unknown }) => void) {
+	subscribeLive(
+		queryUuid: string,
+		cb: (payload: {
+			action: 'CLOSE' | 'CREATE' | 'UPDATE' | 'DELETE';
+			id: string;
+			result: unknown;
+		}) => void
+	) {
 		const set = this.liveSubscribers.get(queryUuid) ?? new Set();
 		set.add(cb);
 		this.liveSubscribers.set(queryUuid, set);

@@ -1,0 +1,54 @@
+{
+	"name": "surrealdb-orm",
+	"version": "1.0.0",
+	"description": "Типизированный ORM для SurrealDB на TypeScript с поддержкой схем, миграций и live-запросов",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"scripts": {
+		"build": "tsc",
+		"dev": "tsc --watch",
+		"clean": "rm -rf dist",
+		"prepublishOnly": "npm run clean && npm run build",
+		"test": "npm exec tsx run-test.ts"
+	},
+	"keywords": [
+		"surrealdb",
+		"orm",
+		"typescript",
+		"database",
+		"schema",
+		"migrations",
+		"live-queries",
+		"graphql",
+		"nosql"
+	],
+	"author": "FrankFMY",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/FrankFMY/surrealdb-orm.git"
+	},
+	"bugs": {
+		"url": "https://github.com/FrankFMY/surrealdb-orm/issues"
+	},
+	"homepage": "https://github.com/FrankFMY/surrealdb-orm#readme",
+	"dependencies": {
+		"ws": "^8.14.2"
+	},
+	"devDependencies": {
+		"@types/node": "^20.10.0",
+		"@types/ws": "^8.5.10",
+		"typescript": "^5.3.0",
+		"tsx": "^4.6.0"
+	},
+	"engines": {
+		"node": ">=18.0.0"
+	},
+	"peerDependencies": {
+		"typescript": ">=5.0.0"
+	}
+}

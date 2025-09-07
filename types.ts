@@ -1,5 +1,4 @@
-import type { KEYS } from "@nemigo/helpers/types";
-import type { RecordBySchema } from "@helpers/types.js";
+import type { KEYS, RecordBySchema } from './helpers.js';
 
 export interface SurrealENV {
 	rpc: string;
@@ -9,7 +8,10 @@ export interface SurrealENV {
 	pass: string;
 }
 
-export type CreateRecordDataRPC<DB, Table extends KEYS<DB>> = Omit<RecordBySchema<DB, Table>, "id"> & { id: string };
+export type CreateRecordDataRPC<DB, Table extends KEYS<DB>> = Omit<
+	RecordBySchema<DB, Table>,
+	'id'
+> & { id: string };
 
 // Экспортируем типы из ORM
-export type { DatabaseSchema, TableConfig, FieldConfig } from "./orm.js";
+export type { DatabaseSchema, TableConfig, FieldConfig } from './orm.js';

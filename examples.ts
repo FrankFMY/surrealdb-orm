@@ -1,425 +1,232 @@
-import type { DatabaseSchema } from "./orm.js";
-import { createORM } from "./orm.js";
-import type { SurrealRPC } from "./rpc.js";
-
 /**
- * Пример схемы базы данных
+ * Примеры использования SurrealDB ORM
  */
-export const exampleSchema: DatabaseSchema = {
+
+import { SurrealRPC, createORM, type DatabaseSchema } from './index.js';
+import { SimpleFuture, SimpleLogger } from './helpers.js';
+
+// Пример схемы базы данных
+const schema: DatabaseSchema = {
 	users: {
-		comment: "Пользователи системы",
+		comment: 'Пользователи системы',
 		fields: {
 			email: {
-				type: "string",
+				type: 'string',
 				required: true,
 				constraints: {
-					"string::is::email": true,
+					'string::is::email': true,
 				},
-				comment: "Email пользователя",
+				comment: 'Email пользователя',
 			},
 			nickname: {
-				type: "string",
+				type: 'string',
 				required: true,
 				constraints: {
-					"string::len": [3, 50],
+					'string::len': [3, 50],
 				},
-				comment: "Никнейм пользователя",
+				comment: 'Никнейм пользователя',
 			},
 			age: {
-				type: "number",
+				type: 'number',
 				required: false,
 				constraints: {
-					"number::min": 0,
-					"number::max": 150,
+					'number::min': 0,
+					'number::max': 150,
 				},
-				comment: "Возраст пользователя",
-			},
-			isActive: {
-				type: "bool",
-				required: true,
-				default: true,
-				comment: "Активен ли пользователь",
+				comment: 'Возраст пользователя',
 			},
 			profile: {
-				type: "object",
+				type: 'object',
 				required: false,
-				comment: "Дополнительная информация о пользователе",
-			},
-			createdAt: {
-				type: "datetime",
-				required: true,
-				comment: "Дата создания",
-			},
-		},
-		indexes: [
-			{
-				name: "idx_email",
-				fields: ["email"],
-				unique: true,
-			},
-			{
-				name: "idx_nickname",
-				fields: ["nickname"],
-				unique: true,
-			},
-		],
-		triggers: [
-			{
-				name: "set_created_at",
-				event: "CREATE",
-				expression: "$value.createdAt = time::now()",
-			},
-		],
-	},
-
-	posts: {
-		comment: "Посты пользователей",
-		fields: {
-			title: {
-				type: "string",
-				required: true,
-				constraints: {
-					"string::len": [1, 200],
+				properties: {
+					bio: { type: 'string' },
+					avatar: { type: 'string' },
 				},
-				comment: "Заголовок поста",
-			},
-			content: {
-				type: "string",
-				required: true,
-				comment: "Содержимое поста",
-			},
-			author: {
-				type: "record",
-				required: true,
-				references: "users",
-				comment: "Автор поста",
 			},
 			tags: {
-				type: "array",
+				type: 'array',
+				arrayOf: 'string',
 				required: false,
-				comment: "Теги поста",
-			},
-			published: {
-				type: "bool",
-				required: true,
-				default: false,
-				comment: "Опубликован ли пост",
 			},
 		},
 		indexes: [
 			{
-				name: "idx_author",
-				fields: ["author"],
-			},
-			{
-				name: "idx_published",
-				fields: ["published"],
-			},
-		],
-		constraints: [
-			{
-				name: "check_content_length",
-				expression: "string::len($value.content) > 10",
+				name: 'idx_email',
+				fields: ['email'],
+				unique: true,
 			},
 		],
 	},
-
-	categories: {
-		comment: "Категории постов",
+	posts: {
+		comment: 'Посты пользователей',
 		fields: {
-			name: {
-				type: "string",
+			title: {
+				type: 'string',
 				required: true,
-				constraints: {
-					"string::len": [1, 100],
-				},
-				comment: "Название категории",
+				comment: 'Заголовок поста',
 			},
-			description: {
-				type: "string",
-				required: false,
-				comment: "Описание категории",
+			content: {
+				type: 'string',
+				required: true,
+				comment: 'Содержимое поста',
 			},
-			parent: {
-				type: "record",
+			author: {
+				type: 'record',
+				required: true,
+				references: 'users',
+			},
+			published: {
+				type: 'bool',
+				required: true,
+				default: false,
+			},
+			tags: {
+				type: 'array',
+				arrayOf: 'string',
 				required: false,
-				references: "categories",
-				comment: "Родительская категория",
 			},
 		},
 		indexes: [
 			{
-				name: "idx_name",
-				fields: ["name"],
-				unique: true,
+				name: 'idx_author_published',
+				fields: ['author', 'published'],
 			},
 			{
-				name: "idx_parent",
-				fields: ["parent"],
+				name: 'search_content',
+				fields: ['content'],
+				search: {
+					analyzer: 'english',
+					bm25: { k1: 1.2, b: 0.75 },
+					highlights: true,
+				},
 			},
 		],
 	},
 };
 
-/**
- * Пример использования ORM
- */
-export async function exampleUsage(rpc: SurrealRPC<any>) {
-	// Создаем ORM
-	const orm = createORM(rpc, exampleSchema);
+// Пример использования
+export async function example() {
+	// Настройка подключения
+	const env = {
+		rpc: 'ws://localhost:3603/rpc',
+		namespace: 'test',
+		database: 'test_db',
+		user: 'root',
+		pass: 'password',
+	};
 
-	// Синхронизируем схему с базой данных
-	await orm.sync();
-
-	// Работаем с таблицей пользователей
-	const usersTable = orm.table("users");
-
-	// Создаем пользователя
-	const user = await usersTable.createRecord({
-		email: "john@example.com",
-		nickname: "john_doe",
-		age: 25,
-		isActive: true,
-		profile: {
-			bio: "Software developer",
-			location: "Moscow",
-		},
+	// Создание подключения
+	const rpc = new SurrealRPC({
+		env,
+		future: new SimpleFuture(),
+		logger: new SimpleLogger(),
 	});
 
-	console.log("Created user:", user);
+	await rpc.open();
 
-	// Находим пользователя по ID
+	// Создание ORM
+	const orm = createORM(rpc, schema);
+
+	// Синхронизация схемы
+	await orm.sync();
+
+	// Работа с пользователями
+	const usersTable = orm.table('users');
+
+	// Создание пользователя
+	const user = await usersTable.createRecord({
+		email: 'john@example.com',
+		nickname: 'john_doe',
+		age: 25,
+		profile: {
+			bio: 'Software developer',
+			avatar: 'https://example.com/avatar.jpg',
+		},
+		tags: ['developer', 'typescript'],
+	});
+
+	console.log('Создан пользователь:', user);
+
+	// Поиск пользователя
 	const foundUser = await usersTable.findById(user.id);
-	console.log("Found user:", foundUser);
+	console.log('Найден пользователь:', foundUser);
 
-	// Обновляем пользователя
+	// Обновление пользователя
 	const updatedUser = await usersTable.updateRecord(user.id, {
 		age: 26,
 		profile: {
-			...user.profile,
-			bio: "Senior Software Developer",
+			bio: 'Senior Software Developer',
+			avatar: 'https://example.com/new-avatar.jpg',
 		},
 	});
-	console.log("Updated user:", updatedUser);
+	console.log('Обновлен пользователь:', updatedUser);
 
-	// Работаем с таблицей постов
-	const postsTable = orm.table("posts");
+	// Работа с постами
+	const postsTable = orm.table('posts');
 
-	// Создаем пост
+	// Создание поста
 	const post = await postsTable.createRecord({
-		title: "My First Post",
-		content: "This is the content of my first post. It's quite long and meaningful.",
+		title: 'Мой первый пост',
+		content: 'Это содержимое моего первого поста в блоге.',
 		author: user.id,
-		tags: ["programming", "typescript", "surrealdb"],
+		published: true,
+		tags: ['блог', 'первый пост'],
+	});
+
+	console.log('Создан пост:', post);
+
+	// Поиск постов с условиями
+	const publishedPosts = await postsTable.find('published = $published', {
 		published: true,
 	});
+	console.log('Опубликованные посты:', publishedPosts);
 
-	console.log("Created post:", post);
+	// Использование Query Builder
+	const query = postsTable
+		.query()
+		.where('published = $published', { published: true })
+		.orderBy('created', 'DESC')
+		.limit(10);
 
-	// Находим все посты
-	const allPosts = await postsTable.findAll();
-	console.log("All posts:", allPosts);
+	const recentPosts = await query.exec();
+	console.log('Последние посты:', recentPosts);
 
-	// Работаем с категориями
-	const categoriesTable = orm.table("categories");
-
-	// Создаем категорию
-	const category = await categoriesTable.createRecord({
-		name: "Programming",
-		description: "Posts about programming",
+	// Live queries
+	const live = await orm.live('posts', {
+		where: 'published = true',
+		fetch: ['author'],
+		onEvent: (evt) => {
+			console.log('Live event:', evt.action, evt.result);
+		},
 	});
 
-	console.log("Created category:", category);
-
-	// Создаем подкатегорию
-	const subcategory = await categoriesTable.createRecord({
-		name: "TypeScript",
-		description: "Posts about TypeScript",
-		parent: category.id,
+	// Графовые связи
+	await orm.relate('wrote', user.id, post.id, {
+		at: new Date().toISOString(),
 	});
 
-	console.log("Created subcategory:", subcategory);
+	// Транзакции
+	await rpc.withTransaction(async () => {
+		const newPost = await postsTable.createRecord({
+			title: 'Пост в транзакции',
+			content: 'Этот пост создан в транзакции.',
+			author: user.id,
+			published: false,
+		});
+
+		await postsTable.updateRecord(newPost.id, {
+			published: true,
+		});
+
+		console.log('Пост создан и обновлен в транзакции:', newPost);
+	});
+
+	// Очистка
+	await live.kill();
+	live.unsubscribe();
+
+	console.log('Пример завершен успешно!');
 }
 
-/**
- * Пример более сложной схемы с отношениями
- */
-export const complexSchema: DatabaseSchema = {
-	companies: {
-		comment: "Компании",
-		fields: {
-			name: {
-				type: "string",
-				required: true,
-				comment: "Название компании",
-			},
-			inn: {
-				type: "string",
-				required: true,
-				comment: "ИНН компании",
-			},
-			address: {
-				type: "object",
-				required: false,
-				comment: "Адрес компании",
-			},
-		},
-		indexes: [
-			{
-				name: "idx_inn",
-				fields: ["inn"],
-				unique: true,
-			},
-		],
-	},
-
-	employees: {
-		comment: "Сотрудники",
-		fields: {
-			firstName: {
-				type: "string",
-				required: true,
-				comment: "Имя",
-			},
-			lastName: {
-				type: "string",
-				required: true,
-				comment: "Фамилия",
-			},
-			email: {
-				type: "string",
-				required: true,
-				comment: "Email",
-			},
-			company: {
-				type: "record",
-				required: true,
-				references: "companies",
-				comment: "Компания",
-			},
-			position: {
-				type: "string",
-				required: true,
-				comment: "Должность",
-			},
-			salary: {
-				type: "number",
-				required: false,
-				comment: "Зарплата",
-			},
-		},
-		indexes: [
-			{
-				name: "idx_email",
-				fields: ["email"],
-				unique: true,
-			},
-			{
-				name: "idx_company",
-				fields: ["company"],
-			},
-		],
-	},
-
-	projects: {
-		comment: "Проекты",
-		fields: {
-			name: {
-				type: "string",
-				required: true,
-				comment: "Название проекта",
-			},
-			description: {
-				type: "string",
-				required: false,
-				comment: "Описание проекта",
-			},
-			company: {
-				type: "record",
-				required: true,
-				references: "companies",
-				comment: "Компания-заказчик",
-			},
-			manager: {
-				type: "record",
-				required: true,
-				references: "employees",
-				comment: "Менеджер проекта",
-			},
-			status: {
-				type: "string",
-				required: true,
-				default: "planning",
-				comment: "Статус проекта",
-			},
-			budget: {
-				type: "number",
-				required: false,
-				comment: "Бюджет проекта",
-			},
-		},
-		indexes: [
-			{
-				name: "idx_company",
-				fields: ["company"],
-			},
-			{
-				name: "idx_manager",
-				fields: ["manager"],
-			},
-			{
-				name: "idx_status",
-				fields: ["status"],
-			},
-		],
-		constraints: [
-			{
-				name: "check_status",
-				expression: "$value.status IN ['planning', 'active', 'completed', 'cancelled']",
-			},
-		],
-	},
-
-	project_assignments: {
-		comment: "Назначения сотрудников на проекты",
-		fields: {
-			project: {
-				type: "record",
-				required: true,
-				references: "projects",
-				comment: "Проект",
-			},
-			employee: {
-				type: "record",
-				required: true,
-				references: "employees",
-				comment: "Сотрудник",
-			},
-			role: {
-				type: "string",
-				required: true,
-				comment: "Роль в проекте",
-			},
-			hoursPerWeek: {
-				type: "number",
-				required: true,
-				comment: "Часов в неделю",
-			},
-		},
-		indexes: [
-			{
-				name: "idx_project",
-				fields: ["project"],
-			},
-			{
-				name: "idx_employee",
-				fields: ["employee"],
-			},
-			{
-				name: "idx_project_employee",
-				fields: ["project", "employee"],
-				unique: true,
-			},
-		],
-	},
-};
+// Экспорт схемы для использования в других файлах
+export { schema };
