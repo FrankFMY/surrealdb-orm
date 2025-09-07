@@ -4,6 +4,7 @@ export interface TypeGenOptions {
 	namespace?: string;
 	plainNamespace?: string;
 	expandRecords?: boolean; // разворачивать record в Plain ссылку
+	excludeSystem?: boolean; // исключать системные поля из Create/Update
 }
 
 function tsTypeFromField(field: FieldConfig, refs: { expand: boolean; plainNs: string }): string {
@@ -100,9 +101,19 @@ export function schemaToTypes(schema: DatabaseSchema, opts: TypeGenOptions = {})
 
 	// Input helpers per table: исключаем id, readonly, valueExpr; обязательность по required
 	const shouldOmitField = (cfg: FieldConfig, fieldName: string): boolean => {
+		const SYSTEM = new Set([
+			"id",
+			"created",
+			"updated",
+			"createdAt",
+			"updatedAt",
+			"version",
+			"zip",
+		]);
 		if (fieldName === "id") return true;
 		if ((cfg as any).readonly) return true;
 		if ((cfg as any).valueExpr) return true;
+		if (opts.excludeSystem && SYSTEM.has(fieldName)) return true;
 		return false;
 	};
 	for (const [tableName, table] of Object.entries<TableConfig>(schema as any)) {

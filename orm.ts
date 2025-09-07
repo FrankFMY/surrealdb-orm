@@ -731,6 +731,9 @@ export class TableQuery<RecordType> {
 	private _timeout: string | undefined;
 	private _parallel: boolean = false;
 	private _explain: false | "BASIC" | "FULL" = false;
+	private _cursorAfter: string | undefined;
+	private _cursorBefore: string | undefined;
+	private _idRange: { from?: string; to?: string } | undefined;
 
 	constructor(rpc: SurrealRPC<any>, tableName: string) {
 		this.rpc = rpc;
@@ -776,6 +779,20 @@ export class TableQuery<RecordType> {
 	}
 	fetch(fields: string[]) {
 		this._fetch = fields;
+		return this;
+	}
+	// Алиасы для FETCH связей
+	fetchRel(path: string | string[]) {
+		if (Array.isArray(path)) this._fetch.push(...path);
+		else this._fetch.push(path);
+		return this;
+	}
+	fetchArrayRel(path: string) {
+		this._fetch.push(path);
+		return this;
+	}
+	fetchMany(paths: string[]) {
+		this._fetch.push(...paths);
 		return this;
 	}
 	select(fields: string[]) {
@@ -834,6 +851,18 @@ export class TableQuery<RecordType> {
 		this._explain = "FULL";
 		return this;
 	}
+	cursorAfter(thing: string) {
+		this._cursorAfter = thing;
+		return this;
+	}
+	cursorBefore(thing: string) {
+		this._cursorBefore = thing;
+		return this;
+	}
+	idRange(from?: string, to?: string) {
+		this._idRange = { from, to };
+		return this;
+	}
 
 	toSQL(): { sql: string; vars: Record<string, unknown> } {
 		let selectKeyword = "SELECT";
@@ -850,6 +879,12 @@ export class TableQuery<RecordType> {
 		if (this._version) sql += ` VERSION ${this._version}`;
 		if (this._split) sql += ` SPLIT ${this._split}`;
 		if (this._where) sql += ` WHERE ${this._where}`;
+		const rangeParts: string[] = [];
+		if (this._idRange?.from) rangeParts.push(`id >= type::thing($table, ${JSON.stringify(this._idRange.from)})`);
+		if (this._idRange?.to) rangeParts.push(`id <= type::thing($table, ${JSON.stringify(this._idRange.to)})`);
+		if (this._cursorAfter) rangeParts.push(`id > ${JSON.stringify(this._cursorAfter)}`);
+		if (this._cursorBefore) rangeParts.push(`id < ${JSON.stringify(this._cursorBefore)}`);
+		if (rangeParts.length) sql += (this._where ? ` AND ` : ` WHERE `) + rangeParts.join(" AND ");
 		if (this._groupBy.length) sql += ` GROUP BY ${this._groupBy.join(", ")}`;
 		if (this._orderRaw) sql += ` ORDER BY ${this._orderRaw}`;
 		else if (this._orderBy) sql += ` ORDER BY ${this._orderBy} ${this._orderDir}`;

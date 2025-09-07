@@ -181,12 +181,25 @@ async function main() {
 		const analyzed = sql.trim() ? analyze(sql) : { total: 0, items: [], groups: {} as any };
 		let drops: DetailedItem[] = [];
 		if (destructive) drops = await planDestructive(rpc, schema);
+		const summary = {
+			total: analyzed.total || 0,
+			tables: (analyzed as any).groups?.tables?.length || 0,
+			fields: (analyzed as any).groups?.fields?.length || 0,
+			indexes: (analyzed as any).groups?.indexes?.length || 0,
+			events: (analyzed as any).groups?.events?.length || 0,
+			alters: (analyzed as any).groups?.alters?.length || 0,
+			destructive: drops.length,
+		};
 
 		if (json) {
-			console.log(JSON.stringify({ ...analyzed, destructive: drops }, null, 2));
+			console.log(JSON.stringify({ ...analyzed, destructive: drops, summary }, null, 2));
+			process.exit(summary.total > 0 || summary.destructive > 0 ? 1 : 0);
 		} else if (detail) {
 			banner("Plan (detailed)");
-			console.log(`Total: ${analyzed.total}`);
+			console.log(
+				`Summary: total=${summary.total}, tables=${summary.tables}, fields=${summary.fields}, indexes=${summary.indexes}, events=${summary.events}, alters=${summary.alters}, destructive=${summary.destructive}`
+			);
+			console.log(`\nTotal statements: ${analyzed.total}`);
 			for (const [group, arr] of Object.entries((analyzed as any).groups || {})) {
 				console.log(`\n# ${group} (${(arr as any[]).length})`);
 				for (const it of arr as any[]) {
@@ -204,6 +217,7 @@ async function main() {
 					console.log(`- drop ${d.kind} ${head}${aspects}`);
 				}
 			}
+			process.exit(summary.total > 0 || summary.destructive > 0 ? 1 : 0);
 		} else {
 			if (sql.trim()) {
 				banner("Plan");
@@ -219,8 +233,8 @@ async function main() {
 					console.log(`- drop ${d.kind} ${head}${aspects}`);
 				}
 			}
+			process.exit(sql.trim() || drops.length ? 1 : 0);
 		}
-		process.exit(0);
 	}
 
 	if (action === "apply") {

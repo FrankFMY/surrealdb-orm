@@ -20,6 +20,7 @@ async function main() {
 	const plainIdx = args.findIndex((a) => a === "--plain" || a === "--plain-namespace");
 	const plainNamespace = plainIdx >= 0 ? args[plainIdx + 1] : "Plain";
 	const expand = args.includes("--expand-records");
+	const excludeSystem = args.includes("--exclude-system");
 
 	const rpc = new SurrealRPC({
 		process: "GEN-TYPES",
@@ -45,7 +46,7 @@ async function main() {
 		process.exit(0);
 	}
 
-	const code = schemaToTypes(schema, { namespace, plainNamespace, expandRecords: expand });
+	const code = schemaToTypes(schema, { namespace, plainNamespace, expandRecords: expand, excludeSystem });
 	if (outfile) {
 		const p = resolve(process.cwd(), outfile);
 		const ws = createWriteStream(p);

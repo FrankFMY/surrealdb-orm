@@ -82,4 +82,22 @@ describe("Query Builder", () => {
 		const sql2 = q2.toSQL().sql;
 		expect(sql2).toContain("ORDER BY title COLLATE NUMERIC ASC EXPLAIN FULL");
 	});
+
+	it("supports cursorAfter/cursorBefore and idRange by id", () => {
+		const rpc = new MockRPC() as any;
+		const table = new Table(rpc, "posts", { fields: { title: { type: "string" } } as any });
+		const q = table.query().where("published = true").idRange("0001", "0fff").cursorAfter("posts:0001").cursorBefore("posts:0fff");
+		const { sql } = q.toSQL();
+		expect(sql).toContain(
+			'WHERE published = true AND id >= type::thing($table, "0001") AND id <= type::thing($table, "0fff") AND id > "posts:0001" AND id < "posts:0fff"'
+		);
+	});
+
+	it("supports fetchRel/fetchArrayRel/fetchMany aliases", () => {
+		const rpc = new MockRPC() as any;
+		const table = new Table(rpc, "posts", { fields: { title: { type: "string" } } as any });
+		const q = table.query().where("published = true").fetchRel(["author", "comments.author"]).fetchArrayRel("tags").fetchMany(["likes"]);
+		const { sql } = q.toSQL();
+		expect(sql).toContain("FETCH author, comments.author, tags, likes");
+	});
 });
