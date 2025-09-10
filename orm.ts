@@ -1,6 +1,17 @@
 import type { KEYS, BaseRecord, RecordBySchema } from './helpers.js';
 import type { SurrealRPC } from './rpc.js';
 import type { SurrealENV } from './types.js';
+import { createTypedRPC } from './src/types/rpc-wrapper.js';
+import type { TypedRPCWrapper } from './src/types/rpc-wrapper.js';
+import type {
+	SurrealDatabaseSchema,
+	SurrealTableConfig,
+	SurrealFieldConfig,
+	SurrealFieldType,
+	SurrealRecord,
+	SurrealId,
+	SurrealValidationResult,
+} from './src/types/surreal.js';
 
 /**
  * Конфигурация поля таблицы
@@ -18,7 +29,7 @@ export interface FieldConfig {
 	/** Обязательное поле */
 	required?: boolean;
 	/** Значение по умолчанию */
-	default?: any;
+	default?: unknown;
 	/** Применять default всегда (DEFAULT ALWAYS) */
 	defaultAlways?: boolean;
 	/** Фиксируемое вычисляемое значение (VALUE expr) */
@@ -26,7 +37,7 @@ export interface FieldConfig {
 	/** Поле только для чтения */
 	readonly?: boolean;
 	/** Ограничения (например, min/max для чисел) */
-	constraints?: Record<string, any>;
+	constraints?: Record<string, unknown>;
 	/** Ссылка на другую таблицу (для type: "record") */
 	references?: string;
 	/** Опции ссылочной целостности */
@@ -127,31 +138,28 @@ export interface DatabaseSchema {
  * Тип записи таблицы на основе конфигурации
  */
 export type TableRecord<Config extends TableConfig> = BaseRecord & {
-	[K in keyof Config['fields']]: Config['fields'][K]['required'] extends true
-		? FieldType<Config['fields'][K]>
-		: FieldType<Config['fields'][K]> | undefined;
+	[K in keyof Config['fields']]: Config['fields'][K]['required'] extends (
+		true
+	) ?
+		FieldType<Config['fields'][K]>
+	:	FieldType<Config['fields'][K]> | undefined;
 };
 
 /**
  * Тип поля на основе конфигурации
  */
-type FieldType<F extends FieldConfig> = F['type'] extends 'string'
-	? string
-	: F['type'] extends 'number'
-	? number
-	: F['type'] extends 'bool'
-	? boolean
-	: F['type'] extends 'datetime'
-	? string
-	: F['type'] extends 'record'
-	? F['references'] extends string
-		? `${F['references']}:${string}`
-		: string
-	: F['type'] extends 'object'
-	? Record<string, any>
-	: F['type'] extends 'array'
-	? any[]
-	: any;
+type FieldType<F extends FieldConfig> =
+	F['type'] extends 'string' ? string
+	: F['type'] extends 'number' ? number
+	: F['type'] extends 'bool' ? boolean
+	: F['type'] extends 'datetime' ? string
+	: F['type'] extends 'record' ?
+		F['references'] extends string ?
+			`${F['references']}:${string}`
+		:	string
+	: F['type'] extends 'object' ? Record<string, unknown>
+	: F['type'] extends 'array' ? unknown[]
+	: unknown;
 
 /**
  * Тип схемы базы данных с типизированными записями
@@ -165,11 +173,13 @@ export type TypedDatabaseSchema<Schema extends DatabaseSchema> = {
  */
 export class Table<Config extends TableConfig> {
 	private rpc: SurrealRPC<any>;
+	private typedRPC: TypedRPCWrapper;
 	private tableName: string;
 	private config: Config;
 
 	constructor(rpc: SurrealRPC<any>, tableName: string, config: Config) {
 		this.rpc = rpc;
+		this.typedRPC = createTypedRPC(rpc);
 		this.tableName = tableName;
 		this.config = config;
 	}
@@ -202,15 +212,16 @@ export class Table<Config extends TableConfig> {
 			unknown
 		>;
 		const sql = `CREATE type::thing($table, $id) CONTENT $data RETURN AFTER`;
-		const result = await this.rpc.query<TableRecord<Config>[]>(sql, {
-			table: this.tableName,
-			id,
-			data: payload,
-		});
-		const created = (
-			result[0]?.result as unknown as TableRecord<Config>[]
-		)?.[0];
-		return created as TableRecord<Config>;
+		const created = await this.typedRPC.queryTableRecord<Config>(
+			sql,
+			this.tableName,
+			{
+				table: this.tableName,
+				id,
+				data: payload,
+			}
+		);
+		return created!;
 	}
 
 	/**
@@ -218,14 +229,14 @@ export class Table<Config extends TableConfig> {
 	 */
 	async findById(id: string): Promise<TableRecord<Config> | null> {
 		const sql = `SELECT * FROM type::thing($table, $id)`;
-		const result = await this.rpc.query<TableRecord<Config>[]>(sql, {
-			table: this.tableName,
-			id,
-		});
-		const row =
-			(result[0]?.result as unknown as TableRecord<Config>[])?.[0] ??
-			null;
-		return row;
+		return await this.typedRPC.queryTableRecord<Config>(
+			sql,
+			this.tableName,
+			{
+				table: this.tableName,
+				id,
+			}
+		);
 	}
 
 	/**
@@ -233,10 +244,13 @@ export class Table<Config extends TableConfig> {
 	 */
 	async findAll(): Promise<TableRecord<Config>[]> {
 		const sql = `SELECT * FROM type::table($table)`;
-		const result = await this.rpc.query<TableRecord<Config>[]>(sql, {
-			table: this.tableName,
-		});
-		return (result[0]?.result as unknown as TableRecord<Config>[]) || [];
+		return await this.typedRPC.queryTableRecords<Config>(
+			sql,
+			this.tableName,
+			{
+				table: this.tableName,
+			}
+		);
 	}
 
 	/**
@@ -247,11 +261,14 @@ export class Table<Config extends TableConfig> {
 		vars: Record<string, unknown> = {}
 	): Promise<TableRecord<Config>[]> {
 		const sql = `SELECT * FROM type::table($table) WHERE ${where}`;
-		const result = await this.rpc.query<TableRecord<Config>[]>(sql, {
-			table: this.tableName,
-			...vars,
-		});
-		return (result[0]?.result as unknown as TableRecord<Config>[]) || [];
+		return await this.typedRPC.queryTableRecords<Config>(
+			sql,
+			this.tableName,
+			{
+				table: this.tableName,
+				...vars,
+			}
+		);
 	}
 
 	/**
@@ -271,11 +288,14 @@ export class Table<Config extends TableConfig> {
 			sql += ` ORDER BY ${options.orderBy} ${options.orderDir ?? 'ASC'}`;
 		if (typeof options.limit === 'number') sql += ` LIMIT ${options.limit}`;
 		if (typeof options.start === 'number') sql += ` START ${options.start}`;
-		const result = await this.rpc.query<TableRecord<Config>[]>(sql, {
-			table: this.tableName,
-			...(options.vars ?? {}),
-		});
-		return (result[0]?.result as unknown as TableRecord<Config>[]) || [];
+		return await this.typedRPC.queryTableRecords<Config>(
+			sql,
+			this.tableName,
+			{
+				table: this.tableName,
+				...(options.vars ?? {}),
+			}
+		);
 	}
 
 	/** Подсчёт записей по условию */
@@ -285,11 +305,10 @@ export class Table<Config extends TableConfig> {
 	): Promise<number> {
 		let sql = `SELECT count() AS count FROM type::table($table)`;
 		if (where) sql += ` WHERE ${where}`;
-		const res = await this.rpc.query<{ count: number }[]>(sql, {
+		return await this.typedRPC.queryCount(sql, {
 			table: this.tableName,
 			...vars,
 		});
-		return (res[0]?.result as any[])?.[0]?.count ?? 0;
 	}
 
 	/** Удаление по условию */
@@ -326,10 +345,7 @@ export class Table<Config extends TableConfig> {
 
 	/** Query Builder */
 	query() {
-		return new TableQuery<TableRecord<Config>>(
-			this.rpc as any,
-			this.tableName
-		);
+		return new TableQuery<TableRecord<Config>>(this.rpc, this.tableName);
 	}
 
 	/**
@@ -344,15 +360,16 @@ export class Table<Config extends TableConfig> {
 			unknown
 		>;
 		const sql = `UPDATE type::thing($table, $id) CONTENT $data RETURN AFTER`;
-		const result = await this.rpc.query<TableRecord<Config>[]>(sql, {
-			table: this.tableName,
-			id,
-			data: updateData,
-		});
-		const updated = (
-			result[0]?.result as unknown as TableRecord<Config>[]
-		)?.[0];
-		return updated as TableRecord<Config>;
+		const updated = await this.typedRPC.queryTableRecord<Config>(
+			sql,
+			this.tableName,
+			{
+				table: this.tableName,
+				id,
+				data: updateData,
+			}
+		);
+		return updated!;
 	}
 
 	/** MERGE частичное объединение */
@@ -361,14 +378,16 @@ export class Table<Config extends TableConfig> {
 		data: Partial<Omit<TableRecord<Config>, 'id' | 'zip' | 'created'>>
 	): Promise<TableRecord<Config>> {
 		const sql = `UPDATE type::thing($table, $id) MERGE $data RETURN AFTER`;
-		const result = await this.rpc.query<TableRecord<Config>[]>(sql, {
-			table: this.tableName,
-			id,
-			data,
-		});
-		return (
-			result[0]?.result as unknown as TableRecord<Config>[]
-		)?.[0] as TableRecord<Config>;
+		const updated = await this.typedRPC.queryTableRecord<Config>(
+			sql,
+			this.tableName,
+			{
+				table: this.tableName,
+				id,
+				data,
+			}
+		);
+		return updated!;
 	}
 
 	/** PATCH JSON Patch */
@@ -377,14 +396,16 @@ export class Table<Config extends TableConfig> {
 		patch: unknown
 	): Promise<TableRecord<Config>> {
 		const sql = `UPDATE type::thing($table, $id) PATCH $data RETURN AFTER`;
-		const result = await this.rpc.query<TableRecord<Config>[]>(sql, {
-			table: this.tableName,
-			id,
-			data: patch,
-		});
-		return (
-			result[0]?.result as unknown as TableRecord<Config>[]
-		)?.[0] as TableRecord<Config>;
+		const updated = await this.typedRPC.queryTableRecord<Config>(
+			sql,
+			this.tableName,
+			{
+				table: this.tableName,
+				id,
+				data: patch,
+			}
+		);
+		return updated!;
 	}
 
 	/** REPLACE полная замена */
@@ -393,14 +414,16 @@ export class Table<Config extends TableConfig> {
 		data: Omit<TableRecord<Config>, 'id'>
 	): Promise<TableRecord<Config>> {
 		const sql = `UPDATE type::thing($table, $id) REPLACE $data RETURN AFTER`;
-		const result = await this.rpc.query<TableRecord<Config>[]>(sql, {
-			table: this.tableName,
-			id,
-			data,
-		});
-		return (
-			result[0]?.result as unknown as TableRecord<Config>[]
-		)?.[0] as TableRecord<Config>;
+		const updated = await this.typedRPC.queryTableRecord<Config>(
+			sql,
+			this.tableName,
+			{
+				table: this.tableName,
+				id,
+				data,
+			}
+		);
+		return updated!;
 	}
 
 	/** UPSERT */
@@ -411,14 +434,16 @@ export class Table<Config extends TableConfig> {
 		const now = Date.now();
 		const record = { ...data, id, updated: now } as Record<string, unknown>;
 		const sql = `UPSERT type::thing($table, $id) MERGE $data RETURN AFTER`;
-		const result = await this.rpc.query<TableRecord<Config>[]>(sql, {
-			table: this.tableName,
-			id,
-			data: record,
-		});
-		return (
-			result[0]?.result as unknown as TableRecord<Config>[]
-		)?.[0] as TableRecord<Config>;
+		const updated = await this.typedRPC.queryTableRecord<Config>(
+			sql,
+			this.tableName,
+			{
+				table: this.tableName,
+				id,
+				data: record,
+			}
+		);
+		return updated!;
 	}
 
 	/**
@@ -516,38 +541,51 @@ export class Table<Config extends TableConfig> {
 			const res = await this.rpc.query<any>(
 				`INFO FOR TABLE ${this.tableName}`
 			);
-			const info = (res[0]?.result as any) ?? {};
+			const info = (res[0]?.result as Record<string, unknown>) ?? {};
 			let permissions: TableConfig['permissions'] | undefined;
 			if (info.permissions) {
 				if (typeof info.permissions === 'string') {
 					const p = info.permissions.toUpperCase();
-					if (p === 'FULL' || p === 'NONE') permissions = p as any;
-				} else if (typeof info.permissions === 'object') {
-					const obj: any = {};
-					if (info.permissions.select)
-						obj.select = info.permissions.select;
-					if (info.permissions.create)
-						obj.create = info.permissions.create;
-					if (info.permissions.update)
-						obj.update = info.permissions.update;
-					if (info.permissions.delete)
-						obj.delete = info.permissions.delete;
-					if (Object.keys(obj).length) permissions = obj as any;
+					if (p === 'FULL' || p === 'NONE')
+						permissions = p as 'FULL' | 'NONE';
+				} else if (
+					typeof info.permissions === 'object' &&
+					info.permissions !== null
+				) {
+					const perms = info.permissions as Record<string, unknown>;
+					const obj: Record<string, string> = {};
+					if (typeof perms.select === 'string')
+						obj.select = perms.select;
+					if (typeof perms.create === 'string')
+						obj.create = perms.create;
+					if (typeof perms.update === 'string')
+						obj.update = perms.update;
+					if (typeof perms.delete === 'string')
+						obj.delete = perms.delete;
+					if (Object.keys(obj).length)
+						permissions = obj as TableConfig['permissions'];
 				}
 			}
 			const comment: string | undefined =
 				typeof info.comment === 'string' ? info.comment : undefined;
 			// schema режим может отсутствовать в INFO; оставим undefined, если недоступен
 			const schemaMode: string | undefined =
-				info.schema ?? info.mode ?? undefined;
+				typeof info.schema === 'string' ? info.schema
+				: typeof info.mode === 'string' ? info.mode
+				: undefined;
 			return {
-				fields: info.fields ?? {},
-				indexes: info.indexes ?? {},
-				events: info.events ?? {},
+				fields: (info.fields as Record<string, string>) ?? {},
+				indexes:
+					(info.indexes as Record<string, { sql: string }>) ?? {},
+				events: (info.events as Record<string, { sql: string }>) ?? {},
 				table: { schema: schemaMode, permissions, comment },
 			};
 		} catch {
-			return { fields: {}, indexes: {}, events: {} } as any;
+			return {
+				fields: {} as Record<string, string>,
+				indexes: {} as Record<string, { sql: string }>,
+				events: {} as Record<string, { sql: string }>,
+			};
 		}
 	}
 
@@ -980,6 +1018,7 @@ export class Table<Config extends TableConfig> {
 /** Простой Query Builder для SELECT */
 export class TableQuery<RecordType> {
 	private rpc: SurrealRPC<any>;
+	private typedRPC: TypedRPCWrapper;
 	private tableName: string;
 	private _where: string = '';
 	private _vars: Record<string, unknown> = {};
@@ -1007,6 +1046,7 @@ export class TableQuery<RecordType> {
 
 	constructor(rpc: SurrealRPC<any>, tableName: string) {
 		this.rpc = rpc;
+		this.typedRPC = createTypedRPC(rpc);
 		this.tableName = tableName;
 	}
 
@@ -1194,8 +1234,7 @@ export class TableQuery<RecordType> {
 
 	async exec(): Promise<RecordType[]> {
 		const { sql, vars } = this.toSQL();
-		const res = await this.rpc.query<RecordType[]>(sql, vars);
-		return (res[0]?.result as unknown as RecordType[]) || [];
+		return await this.typedRPC.query<RecordType[]>(sql, vars);
 	}
 
 	async first(): Promise<RecordType | null> {
@@ -1214,8 +1253,7 @@ export class TableQuery<RecordType> {
 			throw new Error('execValue() требует value(field)');
 		}
 		const { sql, vars } = this.toSQL();
-		const res = await this.rpc.query<T[]>(sql, vars);
-		return (res[0]?.result as unknown as T[]) || [];
+		return await this.typedRPC.query<T[]>(sql, vars);
 	}
 
 	async firstValue<T = unknown>(): Promise<T | null> {
@@ -1239,7 +1277,7 @@ export class TableQuery<RecordType> {
 			table: this.tableName,
 			...this._vars,
 		});
-		return (res[0]?.result as any[])?.[0]?.count ?? 0;
+		return (res[0]?.result as Array<{ count: number }>)?.[0]?.count ?? 0;
 	}
 }
 
@@ -1249,10 +1287,12 @@ export class TableQuery<RecordType> {
 export class SurrealORM<Schema extends DatabaseSchema> {
 	private tables = new Map<keyof Schema, Table<Schema[keyof Schema]>>();
 	private rpc: SurrealRPC<TypedDatabaseSchema<Schema>>;
+	private typedRPC: TypedRPCWrapper;
 	private schema: Schema;
 
 	constructor(rpc: SurrealRPC<TypedDatabaseSchema<Schema>>, schema: Schema) {
 		this.rpc = rpc;
+		this.typedRPC = createTypedRPC(rpc);
 		this.schema = schema;
 		// Инициализация таблиц
 		for (const [tableName, config] of Object.entries(schema)) {
@@ -1264,9 +1304,10 @@ export class SurrealORM<Schema extends DatabaseSchema> {
 	}
 
 	/** Introspection: INFO FOR DB */
-	async infoDB(): Promise<any> {
-		const res = await (this.rpc as any).query('INFO FOR DB');
-		return (res?.[0]?.result as any) ?? {};
+	async infoDB(): Promise<Record<string, unknown>> {
+		return await this.typedRPC.query<Record<string, unknown>>(
+			'INFO FOR DB'
+		);
 	}
 
 	/**
@@ -1283,7 +1324,10 @@ export class SurrealORM<Schema extends DatabaseSchema> {
 		// array<record<user>>
 		const arrRec = t.match(/^array<\s*record<([^>]+)>\s*>$/i);
 		if (arrRec)
-			return { type: 'array', arrayOf: { record: arrRec[1] } } as any;
+			return {
+				type: 'array',
+				arrayOf: { record: arrRec[1] },
+			} as FieldConfig;
 		// array<string|number|bool|datetime|object>
 		const arr = t.match(/^array<\s*([a-z0-9_]+)\s*>$/i);
 		if (arr) {
@@ -1295,10 +1339,18 @@ export class SurrealORM<Schema extends DatabaseSchema> {
 				el === 'datetime' ||
 				el === 'object'
 			) {
-				return { type: 'array', arrayOf: el as any };
+				return {
+					type: 'array',
+					arrayOf: el as
+						| 'string'
+						| 'number'
+						| 'bool'
+						| 'datetime'
+						| 'object',
+				};
 			}
 			// array<record> без цели → пусть будет object
-			return { type: 'array', arrayOf: 'object' as any };
+			return { type: 'array', arrayOf: 'object' as 'object' };
 		}
 		if (
 			t === 'string' ||
@@ -1307,7 +1359,7 @@ export class SurrealORM<Schema extends DatabaseSchema> {
 			t === 'datetime' ||
 			t === 'object'
 		) {
-			return { type: t as any };
+			return { type: t as FieldConfig['type'] };
 		}
 		return { type: 'object' };
 	}
@@ -1315,17 +1367,15 @@ export class SurrealORM<Schema extends DatabaseSchema> {
 	/** Introspection: INFO FOR TABLE → TableConfig */
 	async introspectTable(table: string): Promise<TableConfig> {
 		// STRUCTURE предпочтительнее (массивы полей)
-		let info: any;
+		let info: Record<string, unknown>;
 		try {
-			const res = await (this.rpc as any).query(
+			info = await this.typedRPC.queryTableInfo(
 				`INFO FOR TABLE ${table} STRUCTURE`
 			);
-			info = res?.[0]?.result ?? {};
 		} catch {
-			const res = await (this.rpc as any).query(
+			info = await this.typedRPC.queryTableInfo(
 				`INFO FOR TABLE ${table}`
 			);
-			info = res?.[0]?.result ?? {};
 		}
 
 		const fields: Record<string, FieldConfig> = {};
@@ -1338,9 +1388,9 @@ export class SurrealORM<Schema extends DatabaseSchema> {
 					f.type ?? f.kind ?? f.datatype;
 				const base = this.parseFieldType(typeStr);
 				const required =
-					f.nullable === false || f.required === true
-						? true
-						: undefined;
+					f.nullable === false || f.required === true ?
+						true
+					:	undefined;
 				const cfg: FieldConfig = {
 					...base,
 					required,
@@ -1357,7 +1407,7 @@ export class SurrealORM<Schema extends DatabaseSchema> {
 			}
 		} else if (info.fields && typeof info.fields === 'object') {
 			for (const [name, def] of Object.entries<any>(info.fields)) {
-				const defStr = typeof def === 'string' ? def : def?.sql ?? '';
+				const defStr = typeof def === 'string' ? def : (def?.sql ?? '');
 				// TYPE
 				let typeStr: string | undefined;
 				const mType = defStr.match(/\bTYPE\s+([^\s;]+)/i);
@@ -1393,9 +1443,10 @@ export class SurrealORM<Schema extends DatabaseSchema> {
 				);
 				if (mRef) {
 					const v = mRef[1];
-					cfg.reference = v.startsWith('THEN ')
-						? { onDelete: { then: v.slice(5).trim() } as any }
-						: { onDelete: v as any };
+					cfg.reference =
+						v.startsWith('THEN ') ?
+							{ onDelete: { then: v.slice(5).trim() } as any }
+						:	{ onDelete: v as any };
 				}
 				fields[name] = cfg;
 			}
@@ -1557,16 +1608,17 @@ export class SurrealORM<Schema extends DatabaseSchema> {
 			const p = info.permissions as any;
 			if (typeof p === 'string') {
 				permissions =
-					p.toUpperCase() === 'FULL' || p.toUpperCase() === 'NONE'
-						? (p.toUpperCase() as any)
-						: undefined;
+					p.toUpperCase() === 'FULL' || p.toUpperCase() === 'NONE' ?
+						(p.toUpperCase() as 'FULL' | 'NONE')
+					:	undefined;
 			} else if (typeof p === 'object') {
-				const obj: any = {};
+				const obj: Record<string, string> = {};
 				if (p.select) obj.select = p.select;
 				if (p.create) obj.create = p.create;
 				if (p.update) obj.update = p.update;
 				if (p.delete) obj.delete = p.delete;
-				if (Object.keys(obj).length) permissions = obj as any;
+				if (Object.keys(obj).length)
+					permissions = obj as TableConfig['permissions'];
 			}
 		}
 
@@ -1580,11 +1632,11 @@ export class SurrealORM<Schema extends DatabaseSchema> {
 	/** Инспекция всей БД → DatabaseSchema */
 	async introspectDatabase(): Promise<DatabaseSchema> {
 		const db = await this.infoDB();
-		const tables: string[] = Array.isArray(db?.tables)
-			? db.tables
-			: typeof db?.tables === 'object'
-			? Object.keys(db.tables)
-			: [];
+		const tables: string[] =
+			Array.isArray(db?.tables) ? db.tables
+			: typeof db?.tables === 'object' && db.tables !== null ?
+				Object.keys(db.tables)
+			:	[];
 		const result: DatabaseSchema = {};
 		for (const t of tables) {
 			result[t] = await this.introspectTable(t);
@@ -1650,7 +1702,7 @@ export class SurrealORM<Schema extends DatabaseSchema> {
 		} RETURN AFTER`;
 		const [from_tb, from_id] = fromId.split(':');
 		const [to_tb, to_id] = toId.split(':');
-		const result = await this.rpc.query(sql, {
+		const result = await this.typedRPC.queryRaw(sql, {
 			from_tb,
 			from_id,
 			to_tb,
@@ -1658,7 +1710,9 @@ export class SurrealORM<Schema extends DatabaseSchema> {
 			edge: edgeTable,
 			data,
 		});
-		return (result[0]?.result as any[])?.[0] ?? null;
+		return Array.isArray(result) && result.length > 0 ?
+				(result[0] as Record<string, unknown>)
+			:	null;
 	}
 
 	/** Удалить ребро между записями */
@@ -1727,9 +1781,8 @@ export class SurrealORM<Schema extends DatabaseSchema> {
 		}
 	) {
 		const where = options?.where ? ` WHERE ${options.where}` : '';
-		const fetch = options?.fetch?.length
-			? ` FETCH ${options.fetch.join(', ')}`
-			: '';
+		const fetch =
+			options?.fetch?.length ? ` FETCH ${options.fetch.join(', ')}` : '';
 		const mode = options?.diff ? ` DIFF` : '';
 		const sql = `LIVE SELECT${mode} * FROM ${table}${where}${fetch};`;
 		const queryId = await (this.rpc as any).liveSelect(sql);

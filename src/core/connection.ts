@@ -7,6 +7,13 @@ import WebSocket from 'ws';
 import type { SurrealENV } from '../../types';
 import type { ILogger, Future } from '../../helpers';
 import { ConnectionError, AuthenticationError, TimeoutError } from '../errors';
+import type {
+	SurrealConnectionConfig,
+	SurrealConnectionState,
+	SurrealConnectionError,
+	SurrealQueryParams,
+	SurrealQueryResult,
+} from '../types/surreal.js';
 
 // Состояния подключения
 export enum ConnectionState {
@@ -29,7 +36,7 @@ export interface ConnectionConfig extends SurrealENV {
 	reconnectDelay?: number;
 }
 
-// События подключения
+// События подключения с строгой типизацией
 export interface ConnectionEvents {
 	stateChange: (
 		state: ConnectionState,
@@ -38,7 +45,7 @@ export interface ConnectionEvents {
 	connected: () => void;
 	disconnected: () => void;
 	error: (error: Error) => void;
-	message: (message: any) => void;
+	message: <T = unknown>(message: T) => void;
 	heartbeat: () => void;
 }
 
@@ -53,13 +60,17 @@ export class ConnectionManager extends EventEmitter {
 	private reconnectTimer: NodeJS.Timeout | null = null;
 	private reconnectAttempts = 0;
 	private messageQueue: Array<{
-		message: any;
-		resolve: Function;
-		reject: Function;
+		message: unknown;
+		resolve: (value: unknown) => void;
+		reject: (reason?: unknown) => void;
 	}> = [];
 	private pendingMessages = new Map<
 		string,
-		{ resolve: Function; reject: Function; timeout: NodeJS.Timeout }
+		{
+			resolve: (value: unknown) => void;
+			reject: (reason?: unknown) => void;
+			timeout: NodeJS.Timeout;
+		}
 	>();
 
 	constructor(config: ConnectionConfig, logger: ILogger, future: Future) {
@@ -134,7 +145,7 @@ export class ConnectionManager extends EventEmitter {
 	/**
 	 * Отправка сообщения
 	 */
-	async send<T = any>(message: any): Promise<T> {
+	async send<T = unknown>(message: unknown): Promise<T> {
 		if (this.state !== ConnectionState.CONNECTED) {
 			throw new ConnectionError('Not connected to database');
 		}
@@ -148,9 +159,16 @@ export class ConnectionManager extends EventEmitter {
 				);
 			}, this.config.timeout);
 
-			this.pendingMessages.set(id, { resolve, reject, timeout });
+			this.pendingMessages.set(id, {
+				resolve: (value: unknown) => resolve(value as T),
+				reject,
+				timeout,
+			});
 
-			const messageWithId = { ...message, id };
+			const messageWithId =
+				typeof message === 'object' && message !== null ?
+					{ ...message, id }
+				:	{ message, id };
 
 			try {
 				this.ws!.send(JSON.stringify(messageWithId));
@@ -299,28 +317,46 @@ export class ConnectionManager extends EventEmitter {
 	/**
 	 * Обработка входящих сообщений
 	 */
-	private handleMessage(message: any): void {
+	private handleMessage(message: unknown): void {
 		this.emit('message', message);
 
 		// Обработка ответов на запросы
-		if (message.id && this.pendingMessages.has(message.id)) {
-			const pending = this.pendingMessages.get(message.id)!;
+		if (
+			typeof message === 'object' &&
+			message !== null &&
+			'id' in message &&
+			this.pendingMessages.has(message.id as string)
+		) {
+			const pending = this.pendingMessages.get(message.id as string)!;
 			clearTimeout(pending.timeout);
-			this.pendingMessages.delete(message.id);
+			this.pendingMessages.delete(message.id as string);
 
-			if (message.error) {
+			if ('error' in message && message.error) {
 				pending.reject(
 					new ConnectionError(
-						message.error.message || 'Unknown error'
+						(
+							typeof message.error === 'object' &&
+							message.error !== null &&
+							'message' in message.error
+						) ?
+							String(message.error.message)
+						:	'Unknown error'
 					)
 				);
-			} else {
+			} else if ('result' in message) {
 				pending.resolve(message.result);
 			}
 		}
 
 		// Обработка live query уведомлений
-		if (message.result && message.result.action) {
+		if (
+			typeof message === 'object' &&
+			message !== null &&
+			'result' in message &&
+			typeof message.result === 'object' &&
+			message.result !== null &&
+			'action' in message.result
+		) {
 			this.emit('liveQuery', message.result);
 		}
 	}

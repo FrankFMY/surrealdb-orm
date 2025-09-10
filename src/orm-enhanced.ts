@@ -3,7 +3,9 @@
  */
 
 import type { DatabaseSchema, TableConfig, FieldConfig } from '../orm';
+import type { KEYS, RecordBySchema } from '../helpers';
 import { SchemaValidator } from './types/validation';
+import type { CacheInterface } from './cache';
 import type {
 	StrictDatabaseSchema,
 	ValidationContext,
@@ -126,7 +128,7 @@ export class EnhancedTable<Config extends TableConfig> {
 
 		const result = await this.queryEngine.query(
 			`CREATE type::thing($table, $id) CONTENT $data RETURN AFTER`,
-			{ table: this.tableName, id, data: payload }
+			{ table: this.tableName, id, data: JSON.stringify(payload) }
 		);
 
 		// Инвалидация кэша
@@ -134,7 +136,7 @@ export class EnhancedTable<Config extends TableConfig> {
 			await this.cache.invalidateTable(this.tableName);
 		}
 
-		return result.data[0];
+		return (result.data as Array<Record<string, unknown>>)[0];
 	}
 
 	/**
@@ -194,7 +196,7 @@ export class EnhancedTable<Config extends TableConfig> {
 		const updateData = { ...data, updated: Date.now() };
 		const result = await this.queryEngine.query(
 			`UPDATE type::thing($table, $id) CONTENT $data RETURN AFTER`,
-			{ table: this.tableName, id, data: updateData }
+			{ table: this.tableName, id, data: JSON.stringify(updateData) }
 		);
 
 		// Инвалидация кэша
@@ -202,7 +204,7 @@ export class EnhancedTable<Config extends TableConfig> {
 			await this.cache.invalidateTable(this.tableName);
 		}
 
-		return result.data[0];
+		return (result.data as Array<Record<string, unknown>>)[0];
 	}
 
 	/**
@@ -228,7 +230,8 @@ export class EnhancedTable<Config extends TableConfig> {
 			{ table: this.tableName, id }
 		);
 
-		const record = result.data[0] || null;
+		const record =
+			(result.data as Array<Record<string, unknown>>)[0] || null;
 
 		// Кэширование результата
 		if (this.cache && record) {
@@ -275,7 +278,7 @@ export class EnhancedTable<Config extends TableConfig> {
 			{ table: this.tableName, ...vars }
 		);
 
-		return result.data || [];
+		return (result.data as Array<Record<string, unknown>>) || [];
 	}
 
 	/**
@@ -353,7 +356,7 @@ export class EnhancedSurrealORM<Schema extends DatabaseSchema> {
 				has: async () => false,
 				keys: async () => [],
 				size: async () => 0,
-			} as any);
+			} as CacheInterface);
 		}
 
 		if (config.enableAudit) {
@@ -407,11 +410,12 @@ export class EnhancedSurrealORM<Schema extends DatabaseSchema> {
 
 		// Получение существующих таблиц
 		const result = await this.queryEngine.query('INFO FOR DB');
-		const existingTables = result.data?.tables || {};
+		const existingTables =
+			(result.data as { tables?: Record<string, unknown> })?.tables || {};
 
 		// Создание недостающих таблиц
 		for (const [tableName, table] of this.tables) {
-			if (!existingTables[tableName]) {
+			if (!existingTables[tableName as string]) {
 				await this.createTable(tableName as string, table);
 			}
 		}

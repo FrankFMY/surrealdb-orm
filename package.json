@@ -1,7 +1,7 @@
 {
 	"name": "surrealdb-orm",
-	"version": "1.7.2",
-	"description": "Улучшенный типизированный ORM для SurrealDB с валидацией, кэшированием, безопасностью и мониторингом",
+	"version": "1.8.9",
+	"description": "Типизированный ORM для SurrealDB с валидацией, кэшированием, безопасностью и мониторингом",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"files": [
@@ -18,7 +18,7 @@
 		"test": "vitest",
 		"test:watch": "vitest --watch",
 		"test:coverage": "vitest --coverage",
-		"test:integration": "vitest --config vitest.integration.config.ts",
+		"test:integration": "vitest --config vitest.config.ts",
 		"lint": "eslint src --ext .ts",
 		"lint:fix": "eslint src --ext .ts --fix",
 		"format": "prettier --write src/**/*.ts",
@@ -83,44 +83,64 @@
 			"types": "./dist/index.d.ts"
 		},
 		"./enhanced": {
-			"import": "./dist/orm-enhanced.js",
-			"require": "./dist/orm-enhanced.js",
-			"types": "./dist/orm-enhanced.d.ts"
+			"import": "./dist/src/orm-enhanced.js",
+			"require": "./dist/src/orm-enhanced.js",
+			"types": "./dist/src/orm-enhanced.d.ts"
+		},
+		"./types": {
+			"import": "./dist/types.js",
+			"require": "./dist/types.js",
+			"types": "./dist/types.d.ts"
+		},
+		"./rpc": {
+			"import": "./dist/rpc.js",
+			"require": "./dist/rpc.js",
+			"types": "./dist/rpc.d.ts"
+		},
+		"./orm": {
+			"import": "./dist/orm.js",
+			"require": "./dist/orm.js",
+			"types": "./dist/orm.d.ts"
+		},
+		"./helpers": {
+			"import": "./dist/helpers.js",
+			"require": "./dist/helpers.js",
+			"types": "./dist/helpers.d.ts"
 		},
 		"./validation": {
-			"import": "./dist/types/validation.js",
-			"require": "./dist/types/validation.js",
-			"types": "./dist/types/validation.d.ts"
+			"import": "./dist/src/types/validation.js",
+			"require": "./dist/src/types/validation.js",
+			"types": "./dist/src/types/validation.d.ts"
 		},
 		"./cache": {
-			"import": "./dist/cache/index.js",
-			"require": "./dist/cache/index.js",
-			"types": "./dist/cache/index.d.ts"
+			"import": "./dist/src/cache/index.js",
+			"require": "./dist/src/cache/index.js",
+			"types": "./dist/src/cache/index.d.ts"
 		},
 		"./errors": {
-			"import": "./dist/errors/index.js",
-			"require": "./dist/errors/index.js",
-			"types": "./dist/errors/index.d.ts"
+			"import": "./dist/src/errors/index.js",
+			"require": "./dist/src/errors/index.js",
+			"types": "./dist/src/errors/index.d.ts"
 		},
 		"./performance": {
-			"import": "./dist/performance/index.js",
-			"require": "./dist/performance/index.js",
-			"types": "./dist/performance/index.d.ts"
+			"import": "./dist/src/performance/index.js",
+			"require": "./dist/src/performance/index.js",
+			"types": "./dist/src/performance/index.d.ts"
 		},
 		"./migrations": {
-			"import": "./dist/migrations/index.js",
-			"require": "./dist/migrations/index.js",
-			"types": "./dist/migrations/index.d.ts"
+			"import": "./dist/src/migrations/index.js",
+			"require": "./dist/src/migrations/index.js",
+			"types": "./dist/src/migrations/index.d.ts"
 		},
 		"./monitoring": {
-			"import": "./dist/monitoring/index.js",
-			"require": "./dist/monitoring/index.js",
-			"types": "./dist/monitoring/index.d.ts"
+			"import": "./dist/src/monitoring/index.js",
+			"require": "./dist/src/monitoring/index.js",
+			"types": "./dist/src/monitoring/index.d.ts"
 		},
 		"./security": {
-			"import": "./dist/security/index.js",
-			"require": "./dist/security/index.js",
-			"types": "./dist/security/index.d.ts"
+			"import": "./dist/src/security/index.js",
+			"require": "./dist/src/security/index.js",
+			"types": "./dist/src/security/index.d.ts"
 		}
 	}
 }

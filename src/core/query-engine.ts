@@ -6,6 +6,12 @@ import type { ConnectionManager } from './connection';
 import type { ILogger } from '../../helpers';
 import { QueryError, TimeoutError, RateLimitError } from '../errors';
 import { CacheManager } from '../cache';
+import type { CacheInterface } from '../cache';
+import type {
+	SurrealQueryParams,
+	SurrealQueryResult,
+	SurrealRPCInterface,
+} from '../types/surreal.js';
 
 // Конфигурация query engine
 export interface QueryEngineConfig {
@@ -32,8 +38,8 @@ export interface QueryStats {
 	error?: string;
 }
 
-// Результат запроса
-export interface QueryResult<T = any> {
+// Результат запроса с строгой типизацией
+export interface QueryResult<T = unknown> {
 	data: T;
 	stats: QueryStats;
 	metadata?: {
@@ -43,15 +49,13 @@ export interface QueryResult<T = any> {
 	};
 }
 
-// Параметры запроса
-export interface QueryParams {
-	[key: string]: any;
-}
+// Параметры запроса с строгой типизацией
+export interface QueryParams extends SurrealQueryParams {}
 
-// Кэш запросов
+// Кэш запросов с строгой типизацией
 interface QueryCache {
 	[queryHash: string]: {
-		result: any;
+		result: unknown;
 		timestamp: number;
 		ttl: number;
 	};
@@ -133,14 +137,16 @@ export class QueryEngine {
 			// Инициализация кэша (в реальном проекте здесь будет внешний кэш)
 			this.cache = new CacheManager({
 				get: async (key: string) => this.queryCache[key]?.result,
-				set: async (key: string, value: any, ttl?: number) => {
+				set: async (key: string, value: unknown, ttl?: number) => {
 					this.queryCache[key] = {
 						result: value,
 						timestamp: Date.now(),
 						ttl: ttl || this.config.cacheTTL,
 					};
 				},
-				delete: async (key: string) => delete this.queryCache[key],
+				delete: async (key: string) => {
+					delete this.queryCache[key];
+				},
 				clear: async () => {
 					this.queryCache = {};
 				},
@@ -150,7 +156,7 @@ export class QueryEngine {
 				},
 				keys: async () => Object.keys(this.queryCache),
 				size: async () => Object.keys(this.queryCache).length,
-			} as any);
+			} as CacheInterface);
 		}
 
 		if (this.config.rateLimit) {
@@ -164,7 +170,7 @@ export class QueryEngine {
 	/**
 	 * Выполнение SQL запроса
 	 */
-	async query<T = any>(
+	async query<T = unknown>(
 		sql: string,
 		params?: QueryParams
 	): Promise<QueryResult<T>> {
@@ -195,7 +201,7 @@ export class QueryEngine {
 
 				this.logQuery(stats);
 				return {
-					data: cached,
+					data: cached as T,
 					stats,
 				};
 			}
@@ -304,7 +310,7 @@ export class QueryEngine {
 			// Начало транзакции
 			await this.query('BEGIN TRANSACTION');
 
-			const results: any[] = [];
+			const results: unknown[] = [];
 
 			// Выполнение запросов
 			for (const { sql, params } of queries) {

@@ -400,13 +400,13 @@ export class MetricsCollector extends EventEmitter {
 // Декоратор для автоматического сбора метрик
 export function withMetrics(collector: MetricsCollector, metricName: string) {
 	return function (
-		target: any,
+		target: object,
 		propertyName: string,
 		descriptor: PropertyDescriptor
 	) {
 		const method = descriptor.value;
 
-		descriptor.value = async function (...args: any[]) {
+		descriptor.value = async function (...args: unknown[]) {
 			const startTime = Date.now();
 
 			try {

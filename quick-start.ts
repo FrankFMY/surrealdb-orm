@@ -10,265 +10,306 @@
  * - Работа с отношениями
  */
 
-import { SurrealRPC } from "./rpc.js";
-import { createORM } from "./orm.js";
-import type { DatabaseSchema } from "./orm.js";
-import type { SurrealENV } from "./types.js";
+import { SurrealRPC } from './rpc.js';
+import { createORM } from './orm.js';
+import type { DatabaseSchema } from './orm.js';
+import type { SurrealENV } from './types.js';
 
 // Определяем простую схему для блога
 const blogSchema: DatabaseSchema = {
 	users: {
-		comment: "Пользователи блога",
+		comment: 'Пользователи блога',
 		fields: {
 			username: {
-				type: "string",
+				type: 'string',
 				required: true,
 				constraints: {
-					"string::len": [3, 20],
+					'string::len': [3, 20],
 				},
-				comment: "Имя пользователя",
+				comment: 'Имя пользователя',
 			},
 			email: {
-				type: "string",
+				type: 'string',
 				required: true,
 				constraints: {
-					"string::is::email": true,
+					'string::is::email': true,
 				},
-				comment: "Email пользователя",
+				comment: 'Email пользователя',
 			},
 			bio: {
-				type: "string",
+				type: 'string',
 				required: false,
-				comment: "Краткая биография",
+				comment: 'Краткая биография',
 			},
 		},
 		indexes: [
 			{
-				name: "idx_username",
-				fields: ["username"],
+				name: 'idx_username',
+				fields: ['username'],
 				unique: true,
 			},
 			{
-				name: "idx_email",
-				fields: ["email"],
+				name: 'idx_email',
+				fields: ['email'],
 				unique: true,
 			},
 		],
 	},
 
 	posts: {
-		comment: "Посты блога",
+		comment: 'Посты блога',
 		fields: {
 			title: {
-				type: "string",
+				type: 'string',
 				required: true,
 				constraints: {
-					"string::len": [1, 200],
+					'string::len': [1, 200],
 				},
-				comment: "Заголовок поста",
+				comment: 'Заголовок поста',
 			},
 			content: {
-				type: "string",
+				type: 'string',
 				required: true,
-				comment: "Содержимое поста",
+				comment: 'Содержимое поста',
 			},
 			author: {
-				type: "record",
+				type: 'record',
 				required: true,
-				references: "users",
-				comment: "Автор поста",
+				references: 'users',
+				comment: 'Автор поста',
 			},
 			published: {
-				type: "bool",
+				type: 'bool',
 				required: true,
 				default: false,
-				comment: "Опубликован ли пост",
+				comment: 'Опубликован ли пост',
 			},
 		},
 		indexes: [
 			{
-				name: "idx_author",
-				fields: ["author"],
+				name: 'idx_author',
+				fields: ['author'],
 			},
 			{
-				name: "idx_published",
-				fields: ["published"],
+				name: 'idx_published',
+				fields: ['published'],
 			},
 		],
 		constraints: [
 			{
-				name: "check_content_length",
-				expression: "string::len($value.content) > 10",
+				name: 'check_content_length',
+				expression: 'string::len($value.content) > 10',
 			},
 		],
 	},
 
 	comments: {
-		comment: "Комментарии к постам",
+		comment: 'Комментарии к постам',
 		fields: {
 			content: {
-				type: "string",
+				type: 'string',
 				required: true,
-				comment: "Текст комментария",
+				comment: 'Текст комментария',
 			},
 			post: {
-				type: "record",
+				type: 'record',
 				required: true,
-				references: "posts",
-				comment: "Пост, к которому относится комментарий",
+				references: 'posts',
+				comment: 'Пост, к которому относится комментарий',
 			},
 			author: {
-				type: "record",
+				type: 'record',
 				required: true,
-				references: "users",
-				comment: "Автор комментария",
+				references: 'users',
+				comment: 'Автор комментария',
 			},
 		},
 		indexes: [
 			{
-				name: "idx_post",
-				fields: ["post"],
+				name: 'idx_post',
+				fields: ['post'],
 			},
 			{
-				name: "idx_author",
-				fields: ["author"],
+				name: 'idx_author',
+				fields: ['author'],
 			},
 		],
 	},
 };
 
 async function quickStart() {
-	console.log("🚀 Запуск быстрого старта SurrealDB ORM...");
-	console.log("📁 Текущая директория:", process.cwd());
+	console.log('🚀 Запуск быстрого старта SurrealDB ORM...');
+	console.log('📁 Текущая директория:', process.cwd());
 
 	// Конфигурация подключения
 	const env: SurrealENV = {
-		rpc: "ws://localhost:3603/rpc",
-		namespace: "blog",
-		database: "blog_db",
-		user: "root",
-		pass: "q43uxrUDbNUcIxp5WhUmdCLuwRzBZ807",
+		rpc: 'ws://localhost:3603/rpc',
+		namespace: 'blog',
+		database: 'blog_db',
+		user: 'root',
+		pass: 'q43uxrUDbNUcIxp5WhUmdCLuwRzBZ807',
 	};
 
-	console.log("🔧 Конфигурация:", env);
+	console.log('🔧 Конфигурация:', env);
 
 	// Создаем простые моки для тестирования
 	const future = {
-		run: (fn: any, options: any) => {
-			if (options?.type === "interval") {
-				return setInterval(fn, 5000);
+		run: (
+			fn: () => void | Promise<void>,
+			options: {
+				type: 'interval' | 'timeout';
+				key: string;
+				delay?: number;
 			}
-			return setTimeout(fn, 0);
-		},
-		clear: (type: any, key: any) => {
-			if (type === "interval") {
-				clearInterval(key);
+		) => {
+			if (options.type === 'interval') {
+				setInterval(fn, options.delay || 5000);
 			} else {
-				clearTimeout(key);
+				setTimeout(fn, options.delay || 0);
 			}
 		},
-		delay: 0,
-		timers: new Map(),
-		intervals: new Map(),
-		get: (type: any, key: any) => null,
-		reset: () => {},
-	} as any;
+		clear: (type: 'interval' | 'timeout', key: string) => {
+			if (type === 'interval') {
+				clearInterval(parseInt(key));
+			} else {
+				clearTimeout(parseInt(key));
+			}
+		},
+	};
 
 	// Создаем подключение к базе
 	const rpc = new SurrealRPC({
 		env,
 		future,
 		logger: {
-			print: (caller: any, message: any) => console.log(`[${caller}]`, message),
-			debug: (caller: any, message: any) => console.log(`[DEBUG] ${caller}`, message),
-			info: (caller: any, message: any) => console.log(`[INFO] ${caller}`, message),
-			warn: (caller: any, message: any) => console.log(`[WARN] ${caller}`, message),
-			error: (caller: any, message: any) => console.log(`[ERROR] ${caller}`, message),
-			good: (caller: any, message: any) => console.log(`[SUCCESS] ${caller}`, message),
-			log: (caller: any, message: any) => console.log(`[LOG] ${caller}`, message),
-			throw: (caller: any, message: any) => {
-				throw new Error(`[${caller}] ${message}`);
+			debug: (
+				caller: string | { module?: string; method?: string },
+				message: unknown
+			) => {
+				const module =
+					typeof caller === 'string' ? caller : (
+						caller?.module || 'unknown'
+					);
+				console.log(`[DEBUG] ${module}`, message);
 			},
-			load: (caller: any, message: any) => console.log(`[LOAD] ${caller}`, message),
-			redirect: () => {},
-			balance: () => {},
-		} as any,
+			error: (
+				caller: string | { module?: string; method?: string },
+				message: unknown
+			) => {
+				const module =
+					typeof caller === 'string' ? caller : (
+						caller?.module || 'unknown'
+					);
+				console.log(`[ERROR] ${module}`, message);
+			},
+			good: (
+				caller: string | { module?: string; method?: string },
+				message: unknown
+			) => {
+				const module =
+					typeof caller === 'string' ? caller : (
+						caller?.module || 'unknown'
+					);
+				console.log(`[SUCCESS] ${module}`, message);
+			},
+			info: (
+				caller: string | { module?: string; method?: string },
+				message: unknown
+			) => {
+				const module =
+					typeof caller === 'string' ? caller : (
+						caller?.module || 'unknown'
+					);
+				console.log(`[INFO] ${module}`, message);
+			},
+			warn: (
+				caller: string | { module?: string; method?: string },
+				message: unknown
+			) => {
+				const module =
+					typeof caller === 'string' ? caller : (
+						caller?.module || 'unknown'
+					);
+				console.log(`[WARN] ${module}`, message);
+			},
+		},
 	});
 
 	try {
 		// Подключаемся к базе
 		await rpc.open();
-		console.log("✅ Подключение к SurrealDB установлено");
+		console.log('✅ Подключение к SurrealDB установлено');
 
 		// Создаем ORM
 		const orm = createORM(rpc, blogSchema);
-		console.log("✅ ORM создан");
+		console.log('✅ ORM создан');
 
 		// Синхронизируем схему
 		await orm.sync();
-		console.log("✅ Схема синхронизирована");
+		console.log('✅ Схема синхронизирована');
 
 		// Работаем с пользователями
-		const usersTable = orm.table("users");
+		const usersTable = orm.table('users');
 
 		// Создаем пользователя
 		const user = await usersTable.createRecord({
-			username: "john_doe",
-			email: "john@example.com",
-			bio: "Любитель программирования и кофе",
+			username: 'john_doe',
+			email: 'john@example.com',
+			bio: 'Любитель программирования и кофе',
 		});
-		console.log("✅ Пользователь создан:", user);
+		console.log('✅ Пользователь создан:', user);
 
 		// Работаем с постами
-		const postsTable = orm.table("posts");
+		const postsTable = orm.table('posts');
 
 		// Создаем пост
 		const post = await postsTable.createRecord({
-			title: "Мой первый пост",
-			content: "Это мой первый пост в блоге. Здесь я расскажу о своих впечатлениях от изучения SurrealDB и создания ORM.",
+			title: 'Мой первый пост',
+			content:
+				'Это мой первый пост в блоге. Здесь я расскажу о своих впечатлениях от изучения SurrealDB и создания ORM.',
 			author: user.id,
 			published: true,
 		});
-		console.log("✅ Пост создан:", post);
+		console.log('✅ Пост создан:', post);
 
 		// Работаем с комментариями
-		const commentsTable = orm.table("comments");
+		const commentsTable = orm.table('comments');
 
 		// Создаем комментарий
 		const comment = await commentsTable.createRecord({
-			content: "Отличный пост! Очень интересно узнать о SurrealDB.",
+			content: 'Отличный пост! Очень интересно узнать о SurrealDB.',
 			post: post.id,
 			author: user.id,
 		});
-		console.log("✅ Комментарий создан:", comment);
+		console.log('✅ Комментарий создан:', comment);
 
 		// Получаем все данные
 		const allUsers = await usersTable.findAll();
 		const allPosts = await postsTable.findAll();
 		const allComments = await commentsTable.findAll();
 
-		console.log("\n📊 Результаты:");
+		console.log('\n📊 Результаты:');
 		console.log(`👥 Пользователей: ${allUsers.length}`);
 		console.log(`📝 Постов: ${allPosts.length}`);
 		console.log(`💬 Комментариев: ${allComments.length}`);
 
 		// Демонстрируем поиск
 		const foundUser = await usersTable.findById(user.id);
-		console.log("\n🔍 Найденный пользователь:", foundUser?.username);
+		console.log('\n🔍 Найденный пользователь:', foundUser?.username);
 
 		// Демонстрируем обновление
 		const updatedPost = await postsTable.updateRecord(post.id, {
-			title: "Мой первый пост (обновленный)",
+			title: 'Мой первый пост (обновленный)',
 		});
-		console.log("✏️ Пост обновлен:", updatedPost?.title);
+		console.log('✏️ Пост обновлен:', updatedPost?.title);
 
-		console.log("\n🎉 Быстрый старт завершен успешно!");
+		console.log('\n🎉 Быстрый старт завершен успешно!');
 	} catch (error) {
-		console.error("❌ Ошибка при выполнении быстрого старта:", error);
+		console.error('❌ Ошибка при выполнении быстрого старта:', error);
 	} finally {
 		// Закрываем подключение
 		try {
-			(rpc as any).ws?.close();
+			(rpc as unknown as { ws?: { close: () => void } }).ws?.close();
 		} catch (e) {
 			// Игнорируем ошибки закрытия
 		}

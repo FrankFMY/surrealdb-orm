@@ -121,7 +121,7 @@ export interface AuditLog {
 	operation: string;
 	tableName?: string;
 	recordId?: string;
-	details?: Record<string, any>;
+	details?: Record<string, unknown>;
 	ipAddress?: string;
 	userAgent?: string;
 }
@@ -131,7 +131,7 @@ export interface AuditOperation {
 	operation: string;
 	tableName?: string;
 	recordId?: string;
-	details?: Record<string, any>;
+	details?: Record<string, unknown>;
 	ipAddress?: string;
 	userAgent?: string;
 }

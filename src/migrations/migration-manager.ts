@@ -117,7 +117,8 @@ export class MigrationManager {
       `);
 
 			this.appliedMigrations.clear();
-			for (const record of result.data || []) {
+			for (const record of (result.data as Array<{ version: string }>) ||
+				[]) {
 				this.appliedMigrations.add(record.version);
 			}
 
@@ -155,7 +156,12 @@ export class MigrationManager {
 						{ version }
 					);
 
-					const record = result.data?.[0];
+					const record = (
+						result.data as Array<{
+							applied_at: string;
+							rolled_back_at: string;
+						}>
+					)?.[0];
 					if (record) {
 						appliedAt = record.applied_at;
 						rolledBackAt = record.rolled_back_at;

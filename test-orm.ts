@@ -18,44 +18,38 @@ export async function testORM() {
 
 	// Создаем простые моки для тестирования
 	const future = {
-		run: (fn: any, options: any) => {
-			if (options?.type === 'interval') {
-				return setInterval(fn, 5000);
+		run: (
+			fn: () => void | Promise<void>,
+			options: {
+				type: 'interval' | 'timeout';
+				key: string;
+				delay?: number;
 			}
-			return setTimeout(fn, 0);
-		},
-		clear: (type: any, key: any) => {
-			if (type === 'interval') {
-				clearInterval(key);
+		) => {
+			if (options.type === 'interval') {
+				setInterval(fn, options.delay || 5000);
 			} else {
-				clearTimeout(key);
+				setTimeout(fn, options.delay || 0);
 			}
 		},
-		delay: 0,
-		timers: new Map(),
-		intervals: new Map(),
-		get: (type: any, key: any) => null,
-		reset: () => {},
-	} as any;
+		clear: (type: 'interval' | 'timeout', key: string) => {
+			if (type === 'interval') {
+				clearInterval(parseInt(key));
+			} else {
+				clearTimeout(parseInt(key));
+			}
+		},
+	};
 
 	// Создаем подключение к базе
 	const rpc = new SurrealRPC({
 		env,
 		future,
 		logger: {
-			print: (caller: any, message: any, options?: any) => {
-				const module =
-					typeof caller === 'string' ? caller : (
-						caller?.module || 'unknown'
-					);
-				const method =
-					typeof caller === 'string' ? '' : caller?.method || '';
-				console.log(
-					`[${module}${method ? `:${method}` : ''}]`,
-					message
-				);
-			},
-			debug: (caller: any, message: any) => {
+			debug: (
+				caller: string | { module?: string; method?: string },
+				message: unknown
+			) => {
 				const module =
 					typeof caller === 'string' ? caller : (
 						caller?.module || 'unknown'
@@ -67,7 +61,10 @@ export async function testORM() {
 					message
 				);
 			},
-			info: (caller: any, message: any) => {
+			info: (
+				caller: string | { module?: string; method?: string },
+				message: unknown
+			) => {
 				const module =
 					typeof caller === 'string' ? caller : (
 						caller?.module || 'unknown'
@@ -79,7 +76,10 @@ export async function testORM() {
 					message
 				);
 			},
-			warn: (caller: any, message: any) => {
+			warn: (
+				caller: string | { module?: string; method?: string },
+				message: unknown
+			) => {
 				const module =
 					typeof caller === 'string' ? caller : (
 						caller?.module || 'unknown'
@@ -91,7 +91,10 @@ export async function testORM() {
 					message
 				);
 			},
-			error: (caller: any, message: any) => {
+			error: (
+				caller: string | { module?: string; method?: string },
+				message: unknown
+			) => {
 				const module =
 					typeof caller === 'string' ? caller : (
 						caller?.module || 'unknown'
@@ -103,7 +106,10 @@ export async function testORM() {
 					message
 				);
 			},
-			good: (caller: any, message: any) => {
+			good: (
+				caller: string | { module?: string; method?: string },
+				message: unknown
+			) => {
 				const module =
 					typeof caller === 'string' ? caller : (
 						caller?.module || 'unknown'
@@ -115,44 +121,7 @@ export async function testORM() {
 					message
 				);
 			},
-			log: (caller: any, message: any) => {
-				const module =
-					typeof caller === 'string' ? caller : (
-						caller?.module || 'unknown'
-					);
-				const method =
-					typeof caller === 'string' ? '' : caller?.method || '';
-				console.log(
-					`[LOG] ${module}${method ? `:${method}` : ''}`,
-					message
-				);
-			},
-			throw: (caller: any, message: any) => {
-				const module =
-					typeof caller === 'string' ? caller : (
-						caller?.module || 'unknown'
-					);
-				const method =
-					typeof caller === 'string' ? '' : caller?.method || '';
-				throw new Error(
-					`[${module}${method ? `:${method}` : ''}] ${message}`
-				);
-			},
-			load: (caller: any, message: any) => {
-				const module =
-					typeof caller === 'string' ? caller : (
-						caller?.module || 'unknown'
-					);
-				const method =
-					typeof caller === 'string' ? '' : caller?.method || '';
-				console.log(
-					`[LOAD] ${module}${method ? `:${method}` : ''}`,
-					message
-				);
-			},
-			redirect: () => {},
-			balance: () => {},
-		} as any,
+		},
 	});
 
 	try {
@@ -192,7 +161,7 @@ export async function testORM() {
 		const updatedUser = await usersTable.updateRecord(user.id, {
 			age: 26,
 			profile: {
-				...user.profile,
+				...(user.profile as Record<string, unknown>),
 				bio: 'Updated test user',
 			},
 		});
@@ -288,7 +257,7 @@ export async function testORM() {
 	} finally {
 		// Закрываем подключение
 		try {
-			(rpc as any).ws?.close();
+			(rpc as unknown as { ws?: { close: () => void } }).ws?.close();
 		} catch (e) {
 			// Игнорируем ошибки закрытия
 		}

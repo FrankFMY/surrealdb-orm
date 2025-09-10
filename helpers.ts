@@ -14,11 +14,14 @@ export interface BaseRecord {
 export type KEYS<T> = keyof T;
 
 // Тип для записи по схеме
-export type RecordBySchema<DB, Table extends KEYS<DB>> = DB[Table] extends {
-	id: string;
-}
-	? DB[Table]
-	: DB[Table] & { id: string };
+export type RecordBySchema<DB, Table extends KEYS<DB>> =
+	DB[Table] extends (
+		{
+			id: string;
+		}
+	) ?
+		DB[Table]
+	:	DB[Table] & { id: string };
 
 // Утилиты для работы с типами
 export type DeepPartial<T> = {
@@ -44,10 +47,16 @@ export interface Future {
 
 // Интерфейс для логгера (упрощенная версия)
 export interface ILogger {
-	debug: (context: { module: string; method: string }, data?: any) => void;
-	info: (context: { module: string; method: string }, data?: any) => void;
-	warn: (context: { module: string; method: string }, data?: any) => void;
-	error: (context: { module: string; method: string }, data?: any) => void;
+	debug: (
+		context: { module: string; method: string },
+		data?: unknown
+	) => void;
+	info: (context: { module: string; method: string }, data?: unknown) => void;
+	warn: (context: { module: string; method: string }, data?: unknown) => void;
+	error: (
+		context: { module: string; method: string },
+		data?: unknown
+	) => void;
 	good: (module: string, message: string) => void;
 }
 
@@ -98,19 +107,19 @@ export class SimpleFuture implements Future {
 
 // Простая реализация логгера
 export class SimpleLogger implements ILogger {
-	debug(context: { module: string; method: string }, data?: any): void {
+	debug(context: { module: string; method: string }, data?: unknown): void {
 		console.debug(`[${context.module}:${context.method}]`, data);
 	}
 
-	info(context: { module: string; method: string }, data?: any): void {
+	info(context: { module: string; method: string }, data?: unknown): void {
 		console.info(`[${context.module}:${context.method}]`, data);
 	}
 
-	warn(context: { module: string; method: string }, data?: any): void {
+	warn(context: { module: string; method: string }, data?: unknown): void {
 		console.warn(`[${context.module}:${context.method}]`, data);
 	}
 
-	error(context: { module: string; method: string }, data?: any): void {
+	error(context: { module: string; method: string }, data?: unknown): void {
 		console.error(`[${context.module}:${context.method}]`, data);
 	}
 

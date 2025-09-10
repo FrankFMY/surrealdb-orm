@@ -3,22 +3,27 @@ import type { CreateRecordDataRPC, SurrealENV } from './types.js';
 import { randID } from './helpers.js';
 import { exit } from 'node:process';
 import WebSocket from 'ws';
+import type {
+	SurrealRPCInterface,
+	SurrealQueryParams,
+	SurrealQueryResult,
+} from './src/types/surreal.js';
 
 //...
 
 export type SurrealRPC_BulkCommand<
 	DB,
 	Table extends KEYS<DB>,
-	Bulk extends boolean
-> = Bulk extends true
-	? { params: [Table]; return: RecordBySchema<DB, Table>[] }
-	: { params: [string]; return: RecordBySchema<DB, Table> | null };
+	Bulk extends boolean,
+> =
+	Bulk extends true ? { params: [Table]; return: RecordBySchema<DB, Table>[] }
+	:	{ params: [string]; return: RecordBySchema<DB, Table> | null };
 
 export interface SurrealRPC_Schema<
 	DB,
 	Table extends KEYS<DB>,
 	Bulk extends boolean,
-	Data = unknown
+	Data = unknown,
 > {
 	ping: {
 		params: never[];
@@ -57,7 +62,7 @@ export interface SurrealRPC_Schema<
 	};
 	merge: {
 		params: [Table | string, Partial<DB[Table]>];
-		return: any;
+		return: RecordBySchema<DB, Table> | null;
 	};
 	live: {
 		params: [string] | [string, boolean];
@@ -83,7 +88,7 @@ export interface SurrealRPC_ResponseOK<
 	Table extends KEYS<DB>,
 	Bulk extends boolean,
 	Data,
-	Command extends KEYS<SurrealRPC_Schema<DB, Table, Bulk, Data>>
+	Command extends KEYS<SurrealRPC_Schema<DB, Table, Bulk, Data>>,
 > {
 	id: string;
 	result: SurrealRPC_Schema<DB, Table, Bulk, Data>[Command]['return'];
@@ -225,7 +230,9 @@ DEFINE FUNCTION IF NOT EXISTS fn::upsert($record: object, $now: number) {
 		// используем обычный query, он возвращает массив результатов
 		return this.send<KEYS<DB>, false, any, 'query'>(
 			'query',
-			(vars ? [sql, vars] : [sql]) as any
+			(vars ? [sql, vars] : [sql]) as
+				| [string, Record<string, unknown>]
+				| [string]
 		);
 	}
 
@@ -289,9 +296,7 @@ ${arr.map((sql) => `$result = array::add($result, (${sql}))`).join(';\n')};
 	private heap = new Map<
 		string,
 		{
-			resolver: (
-				result: SurrealRPC_UnknownResponseOK<DB>['result']
-			) => void;
+			resolver: (result: unknown) => void;
 			rejecter: (error: SurrealRPC_ResponseERR['error']) => void;
 		}
 	>();
@@ -311,25 +316,25 @@ ${arr.map((sql) => `$result = array::add($result, (${sql}))`).join(';\n')};
 		Table extends KEYS<DB>,
 		Bulk extends boolean,
 		Data,
-		Command extends KEYS<SurrealRPC_Schema<DB, Table, Bulk, Data>>
+		Command extends KEYS<SurrealRPC_Schema<DB, Table, Bulk, Data>>,
 	>(
 		cmd: Command,
 		params: SurrealRPC_Schema<DB, Table, Bulk, Data>[Command]['params']
 	): Promise<SurrealRPC_Schema<DB, Table, Bulk, Data>[Command]['return']> {
-		let resolver!: (
-			result: SurrealRPC_ResponseOK<
-				DB,
-				Table,
-				Bulk,
-				Data,
-				Command
-			>['result']
-		) => void;
+		let resolver!: (result: unknown) => void;
 		let rejecter!: (error: SurrealRPC_ResponseERR['error']) => void;
 		const promise = new Promise<
 			SurrealRPC_Schema<DB, Table, Bulk, Data>[Command]['return']
 		>((resolve, reject) => {
-			resolver = resolve;
+			resolver = (result: unknown) =>
+				resolve(
+					result as SurrealRPC_Schema<
+						DB,
+						Table,
+						Bulk,
+						Data
+					>[Command]['return']
+				);
 			rejecter = reject;
 		});
 		const id = randID();

@@ -49,6 +49,12 @@ import {
 	QueryEngine,
 } from 'surrealdb-orm/enhanced';
 
+// Основные типы и утилиты
+import type { DatabaseSchema, FieldConfig } from 'surrealdb-orm/types';
+import { SurrealRPC } from 'surrealdb-orm/rpc';
+import { createORM } from 'surrealdb-orm/orm';
+import { KEYS, RecordBySchema } from 'surrealdb-orm/helpers';
+
 // Валидация
 import { SchemaValidator } from 'surrealdb-orm/validation';
 
@@ -90,10 +96,10 @@ npm run build
 
 ```bash
 # Переходим в директорию с ORM
-cd packages/surreal
+cd surrealdb-orm
 
 # Запускаем быстрый старт
-npm exec tsx run-quick-start.ts
+npm run examples
 ```
 
 ### 2. Определение схемы
@@ -567,7 +573,7 @@ const schema: DatabaseSchema = {
 docker-compose up -d
 
 # Запустите тест
-npm exec tsx run-test.ts
+npm test
 ```
 
 ## CLI
@@ -706,6 +712,42 @@ await rpc.withTransaction(async () => {
     - Create исключает `id`, `readonly`, `valueExpr`; обязательность = `required` без `default`
     - Update — Partial только по обновляемым полям
 - Утилиты: `RecordId<T>`, `DeepPartial<T>`, `CreateInput<T>`, `UpdateInput<T>`
+
+
+### 🔧 **Строгие типы SurrealDB**
+
+```typescript
+// Полная типизация SurrealDB структур
+import type {
+	SurrealRecord,
+	SurrealFieldType,
+	SurrealDatabaseSchema,
+	SurrealTableConfig,
+	SurrealFieldConfig,
+	SurrealConstraints,
+	SurrealValidationError,
+} from 'surrealdb-orm/types';
+
+// Строгая типизация полей
+type UserRecord = SurrealRecord<{
+	email: string;
+	age: number;
+	profile: Record<string, unknown>;
+}>;
+
+// Строгая типизация схемы
+const schema: SurrealDatabaseSchema<{
+	users: UserRecord;
+	posts: PostRecord;
+}> = {
+	users: {
+		fields: {
+			email: { type: 'string', required: true },
+			age: { type: 'number', constraints: { min: 0, max: 150 } },
+		},
+	},
+};
+```
 
 ## Требования
 

@@ -2,89 +2,59 @@
  * Система валидации и строгих типов для SurrealDB ORM
  */
 
-import type { FieldConfig, TableConfig, DatabaseSchema } from '../../orm';
+import type {
+	SurrealDatabaseSchema,
+	SurrealTableConfig,
+	SurrealFieldConfig,
+	SurrealFieldType,
+	SurrealConstraints,
+	SurrealPermissions,
+	SurrealIndexConfig,
+	SurrealEventConfig,
+	SurrealTriggerConfig,
+	SurrealValidationResult,
+	SurrealValidationError,
+	SurrealRecordType,
+	SurrealTableName,
+	SurrealFieldName,
+} from './surreal.js';
 
-// Базовые типы валидации
-export interface ValidationResult {
-	isValid: boolean;
-	errors: ValidationError[];
-}
-
-export interface ValidationError {
-	field: string;
-	message: string;
-	code: string;
-	value?: unknown;
-}
-
-// Строгие типы для полей
-export type StrictFieldType =
-	| 'string'
-	| 'number'
-	| 'bool'
-	| 'datetime'
-	| 'object'
-	| 'array'
-	| 'record';
-
-// Валидаторы для каждого типа
-export interface FieldValidator<T = unknown> {
-	validate(value: T): ValidationResult;
-	sanitize(value: unknown): T;
-}
-
-// Строгие типы для ограничений
-export interface StrictConstraints {
-	// String constraints
-	minLength?: number;
-	maxLength?: number;
-	pattern?: RegExp;
-	email?: boolean;
-	url?: boolean;
-	uuid?: boolean;
-
-	// Number constraints
-	min?: number;
-	max?: number;
-	integer?: boolean;
-	positive?: boolean;
-	negative?: boolean;
-
-	// Array constraints
-	minItems?: number;
-	maxItems?: number;
-	uniqueItems?: boolean;
-
-	// Object constraints
-	requiredProperties?: string[];
-	additionalProperties?: boolean;
-
-	// Custom constraints
-	custom?: (value: unknown) => boolean;
-}
-
-// Улучшенная конфигурация поля
-export interface StrictFieldConfig
-	extends Omit<FieldConfig, 'type' | 'constraints'> {
-	type: StrictFieldType;
-	constraints?: StrictConstraints;
-	validators?: FieldValidator[];
-	transform?: (value: unknown) => unknown;
-}
-
-// Улучшенная конфигурация таблицы
-export interface StrictTableConfig extends Omit<TableConfig, 'fields'> {
-	fields: Record<string, StrictFieldConfig>;
+// Переэкспорт типов из surreal.ts для обратной совместимости
+export type ValidationResult<T = unknown> = SurrealValidationResult<T>;
+export type ValidationError = SurrealValidationError;
+export type StrictFieldType = SurrealFieldType;
+export type StrictConstraints = SurrealConstraints;
+export type StrictPermissions = SurrealPermissions;
+export type StrictIndexConfig = SurrealIndexConfig;
+export type StrictEventConfig = SurrealEventConfig;
+export type StrictTriggerConfig = SurrealTriggerConfig;
+export type StrictDatabaseSchema<
+	T extends Record<string, Record<string, unknown>> = Record<
+		string,
+		Record<string, unknown>
+	>,
+> = SurrealDatabaseSchema<T>;
+export type StrictTableConfig<
+	T extends Record<string, unknown> = Record<string, unknown>,
+> = SurrealTableConfig<T> & {
 	validation?: {
 		strict?: boolean;
 		allowUnknownFields?: boolean;
 		customValidators?: Record<string, FieldValidator>;
 	};
-}
+};
+export type StrictFieldConfig<T extends SurrealFieldType = SurrealFieldType> =
+	SurrealFieldConfig<T> & {
+		properties?: Record<string, StrictFieldConfig>;
+		arrayOf?: StrictFieldType | StrictFieldConfig;
+		references?: string;
+		transform?: (value: unknown) => unknown;
+	};
 
-// Улучшенная схема базы данных
-export interface StrictDatabaseSchema {
-	[tableName: string]: StrictTableConfig;
+// Валидаторы для каждого типа
+export interface FieldValidator<T = unknown> {
+	validate(value: T): ValidationResult<T>;
+	sanitize(value: unknown): T;
 }
 
 // Метаданные схемы
@@ -97,8 +67,9 @@ export interface SchemaMetadata {
 }
 
 // Результат валидации записи
-export interface RecordValidationResult extends ValidationResult {
-	sanitizedData: Record<string, unknown>;
+export interface RecordValidationResult<T = Record<string, unknown>>
+	extends ValidationResult<T> {
+	sanitizedData: T;
 	warnings: ValidationError[];
 }
 
@@ -145,7 +116,7 @@ export class SchemaValidator {
 				const fieldValidation = this.validateFieldConfig(
 					tableName,
 					fieldName,
-					fieldConfig
+					fieldConfig as StrictFieldConfig
 				);
 				errors.push(...fieldValidation.errors);
 			}
@@ -262,14 +233,14 @@ export class SchemaValidator {
 	/**
 	 * Валидация данных записи
 	 */
-	validateRecord(
+	validateRecord<T extends Record<string, unknown> = Record<string, unknown>>(
 		tableName: string,
-		data: Record<string, unknown>,
+		data: T,
 		context: ValidationContext
-	): RecordValidationResult {
+	): RecordValidationResult<T> {
 		const errors: ValidationError[] = [];
 		const warnings: ValidationError[] = [];
-		const sanitizedData: Record<string, unknown> = {};
+		const sanitizedData = {} as T;
 
 		const tableConfig = this.schema[tableName];
 		if (!tableConfig) {
@@ -282,7 +253,7 @@ export class SchemaValidator {
 						code: 'TABLE_NOT_FOUND',
 					},
 				],
-				sanitizedData: {},
+				sanitizedData: {} as T,
 				warnings: [],
 			};
 		}
@@ -291,11 +262,11 @@ export class SchemaValidator {
 		for (const [fieldName, fieldConfig] of Object.entries(
 			tableConfig.fields
 		)) {
-			const value = data[fieldName];
+			const value = (data as Record<string, unknown>)[fieldName];
 			const fieldValidation = this.validateFieldValue(
 				fieldName,
 				value,
-				fieldConfig,
+				fieldConfig as StrictFieldConfig,
 				context
 			);
 
@@ -308,12 +279,16 @@ export class SchemaValidator {
 			}
 
 			// Санитизация значения
-			sanitizedData[fieldName] = fieldValidation.sanitizedValue;
+			(sanitizedData as Record<string, unknown>)[fieldName] =
+				fieldValidation.sanitizedValue;
 		}
 
 		// Проверка неизвестных полей
-		if (!tableConfig.validation?.allowUnknownFields) {
-			for (const fieldName of Object.keys(data)) {
+		const strictTableConfig = tableConfig as StrictTableConfig;
+		if (!strictTableConfig.validation?.allowUnknownFields) {
+			for (const fieldName of Object.keys(
+				data as Record<string, unknown>
+			)) {
 				if (!tableConfig.fields[fieldName]) {
 					errors.push({
 						field: fieldName,
@@ -598,7 +573,10 @@ export class SchemaValidator {
 				});
 			}
 
-			if (constraints.pattern && !constraints.pattern.test(value)) {
+			if (
+				constraints.pattern &&
+				!new RegExp(constraints.pattern).test(value)
+			) {
 				errors.push({
 					field: fieldName,
 					message: `String does not match required pattern`,

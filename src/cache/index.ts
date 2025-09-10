@@ -4,10 +4,22 @@
 
 import { EventEmitter } from 'events';
 
-// Интерфейс для кэша
+// Интерфейс для Redis клиента
+interface RedisClient {
+	get(key: string): Promise<string | null>;
+	set(key: string, value: string): Promise<void>;
+	setex(key: string, seconds: number, value: string): Promise<void>;
+	del(key: string): Promise<void>;
+	exists(key: string): Promise<number>;
+	keys(pattern: string): Promise<string[]>;
+	dbsize(): Promise<number>;
+	flushdb(): Promise<void>;
+}
+
+// Интерфейс для кэша с строгой типизацией
 export interface CacheInterface {
-	get<T>(key: string): Promise<T | null>;
-	set<T>(key: string, value: T, ttl?: number): Promise<void>;
+	get<T = unknown>(key: string): Promise<T | null>;
+	set<T = unknown>(key: string, value: T, ttl?: number): Promise<void>;
 	delete(key: string): Promise<void>;
 	clear(): Promise<void>;
 	has(key: string): Promise<boolean>;
@@ -24,11 +36,11 @@ export interface CacheConfig {
 	compression?: boolean;
 }
 
-// События кэша
+// События кэша с строгой типизацией
 export interface CacheEvents {
-	hit: (key: string, value: unknown) => void;
+	hit: <T = unknown>(key: string, value: T) => void;
 	miss: (key: string) => void;
-	set: (key: string, value: unknown, ttl?: number) => void;
+	set: <T = unknown>(key: string, value: T, ttl?: number) => void;
 	delete: (key: string) => void;
 	clear: () => void;
 	evict: (key: string, reason: string) => void;
@@ -297,10 +309,10 @@ export class MemoryCache extends EventEmitter implements CacheInterface {
 
 // Redis кэш (требует redis клиент)
 export class RedisCache implements CacheInterface {
-	private client: any; // Redis client
+	private client: RedisClient;
 	private readonly config: Required<CacheConfig>;
 
-	constructor(redisClient: any, config: CacheConfig = {}) {
+	constructor(redisClient: RedisClient, config: CacheConfig = {}) {
 		this.client = redisClient;
 		this.config = {
 			defaultTTL: config.defaultTTL ?? 300000,
@@ -311,7 +323,7 @@ export class RedisCache implements CacheInterface {
 		};
 	}
 
-	async get<T>(key: string): Promise<T | null> {
+	async get<T = unknown>(key: string): Promise<T | null> {
 		try {
 			const value = await this.client.get(key);
 			return value ? JSON.parse(value) : null;
@@ -320,7 +332,7 @@ export class RedisCache implements CacheInterface {
 		}
 	}
 
-	async set<T>(key: string, value: T, ttl?: number): Promise<void> {
+	async set<T = unknown>(key: string, value: T, ttl?: number): Promise<void> {
 		try {
 			const serialized = JSON.stringify(value);
 			const actualTTL = ttl || this.config.defaultTTL;
@@ -466,13 +478,13 @@ export class CacheManager {
 	}
 
 	// Кэширование схем
-	async getSchema(tableName: string): Promise<any> {
-		return this.cache.get(this.buildKey(['schema', tableName]));
+	async getSchema<T = unknown>(tableName: string): Promise<T | null> {
+		return this.cache.get<T>(this.buildKey(['schema', tableName]));
 	}
 
-	async setSchema(
+	async setSchema<T = unknown>(
 		tableName: string,
-		schema: any,
+		schema: T,
 		ttl?: number
 	): Promise<void> {
 		return this.cache.set(
@@ -483,24 +495,28 @@ export class CacheManager {
 	}
 
 	// Кэширование запросов
-	async getQueryResult(queryHash: string): Promise<any> {
-		return this.cache.get(this.buildKey(['query', queryHash]));
+	async getQueryResult<T = unknown>(queryHash: string): Promise<T | null> {
+		return this.cache.get<T>(this.buildKey(['query', queryHash]));
 	}
 
-	async setQueryResult(
+	async setQueryResult<T = unknown>(
 		queryHash: string,
-		result: any,
+		result: T,
 		ttl?: number
 	): Promise<void> {
 		return this.cache.set(this.buildKey(['query', queryHash]), result, ttl);
 	}
 
 	// Кэширование метаданных
-	async getMetadata(key: string): Promise<any> {
-		return this.cache.get(this.buildKey(['metadata', key]));
+	async getMetadata<T = unknown>(key: string): Promise<T | null> {
+		return this.cache.get<T>(this.buildKey(['metadata', key]));
 	}
 
-	async setMetadata(key: string, metadata: any, ttl?: number): Promise<void> {
+	async setMetadata<T = unknown>(
+		key: string,
+		metadata: T,
+		ttl?: number
+	): Promise<void> {
 		return this.cache.set(this.buildKey(['metadata', key]), metadata, ttl);
 	}
 
