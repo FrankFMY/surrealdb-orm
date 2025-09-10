@@ -1,20 +1,28 @@
 # SurrealDB ORM
 
-Простой и типизированный ORM для работы с SurrealDB в TypeScript.
+Улучшенный типизированный ORM для работы с SurrealDB в TypeScript с валидацией, кэшированием, безопасностью и мониторингом.
 
 ## Возможности
 
--   ✅ Типизированное определение схемы базы данных
--   ✅ Автоматическая генерация SQL для создания таблиц
--   ✅ CRUD операции с типизацией
--   ✅ Поддержка индексов, ограничений и триггеров
--   ✅ Синхронизация схемы с базой данных
--   ✅ Ссылки между таблицами
--   ✅ Расширенные обновления: MERGE, PATCH, REPLACE, UPSERT
--   ✅ Live‑queries: live/kill/subscribe
--   ✅ Утилиты для графовых связей: relate/unrelate
--   ✅ Nested поля: `obj.prop`, `obj.sub.prop`, `arr.*.prop` для `array<object>`
--   ✅ SEARCH индексы: `ANALYZER`, `BM25(k1,b)`, `HIGHLIGHTS` в конфиге/SQL/интроспекции/диффе
+- ✅ Типизированное определение схемы базы данных
+- ✅ Автоматическая генерация SQL для создания таблиц
+- ✅ CRUD операции с типизацией
+- ✅ Поддержка индексов, ограничений и триггеров
+- ✅ Синхронизация схемы с базой данных
+- ✅ Ссылки между таблицами
+- ✅ Расширенные обновления: MERGE, PATCH, REPLACE, UPSERT
+- ✅ Live‑queries: live/kill/subscribe
+- ✅ Утилиты для графовых связей: relate/unrelate
+- ✅ Nested поля: `obj.prop`, `obj.sub.prop`, `arr.*.prop` для `array<object>`
+- ✅ SEARCH индексы: `ANALYZER`, `BM25(k1,b)`, `HIGHLIGHTS` в конфиге/SQL/интроспекции/диффе
+- ✅ Валидация данных с детальными ошибками
+- ✅ Многоуровневое кэширование (Memory, Redis, Multi-level)
+- ✅ Пул соединений для высокой производительности
+- ✅ Система миграций и версионирование схемы
+- ✅ Мониторинг и сбор метрик производительности
+- ✅ Защита от SQL-инъекций и аудит операций
+- ✅ Оптимизация и анализ SQL-запросов
+- ✅ Централизованная обработка ошибок
 
 ## Установка
 
@@ -26,6 +34,45 @@ npm install surrealdb-orm
 pnpm add surrealdb-orm
 # или
 yarn add surrealdb-orm
+```
+
+### Импорт модулей
+
+```typescript
+// Основной ORM
+import { createORM, SurrealRPC } from 'surrealdb-orm';
+
+// Enhanced ORM с дополнительными возможностями
+import {
+	createEnhancedORM,
+	ConnectionManager,
+	QueryEngine,
+} from 'surrealdb-orm/enhanced';
+
+// Валидация
+import { SchemaValidator } from 'surrealdb-orm/validation';
+
+// Кэширование
+import { CacheManager, MemoryCache, RedisCache } from 'surrealdb-orm/cache';
+
+// Производительность
+import { ConnectionPool, QueryOptimizer } from 'surrealdb-orm/performance';
+
+// Миграции
+import { MigrationManager } from 'surrealdb-orm/migrations';
+
+// Мониторинг
+import { MetricsCollector } from 'surrealdb-orm/monitoring';
+
+// Безопасность
+import { SQLInjectionValidator, AuditLogger } from 'surrealdb-orm/security';
+
+// Обработка ошибок
+import {
+	SurrealORMError,
+	ValidationError,
+	ConnectionError,
+} from 'surrealdb-orm/errors';
 ```
 
 ### Из исходного кода
@@ -95,36 +142,45 @@ const schema: DatabaseSchema = {
 };
 ```
 
-### 3. Создание ORM
+### 3. Создание Enhanced ORM
 
 ```typescript
 import {
-	SurrealRPC,
-	createORM,
+	ConnectionManager,
+	QueryEngine,
+	createEnhancedORM,
 	SimpleFuture,
 	SimpleLogger,
-} from 'surrealdb-orm';
+} from 'surrealdb-orm/enhanced';
 
 // Настройка подключения
-const env = {
-	rpc: 'ws://localhost:3603/rpc',
-	namespace: 'test',
-	database: 'test_db',
-	user: 'root',
-	pass: 'password',
-};
+const connection = new ConnectionManager(
+	{
+		rpc: 'ws://localhost:3603/rpc',
+		namespace: 'test',
+		database: 'test_db',
+		user: 'root',
+		pass: 'password',
+	},
+	new SimpleLogger(),
+	new SimpleFuture()
+);
 
-// Создание подключения
-const rpc = new SurrealRPC({
-	env,
-	future: new SimpleFuture(),
-	logger: new SimpleLogger(),
+await connection.connect();
+
+// Создание Query Engine с кэшированием
+const queryEngine = new QueryEngine(connection, new SimpleLogger(), {
+	enableCaching: true,
+	enableQueryLogging: true,
 });
 
-await rpc.open();
-
-// Создание ORM
-const orm = createORM(rpc, schema);
+// Создание Enhanced ORM с валидацией и кэшированием
+const orm = createEnhancedORM(connection, queryEngine, schema, {
+	enableValidation: true,
+	enableCaching: true,
+	enableAudit: true,
+	strictMode: true,
+});
 ```
 
 ### 4. Синхронизация схемы
@@ -162,18 +218,159 @@ const updatedUser = await usersTable.updateRecord(user.id, {
 await usersTable.deleteRecord(user.id);
 ```
 
+## Расширенные возможности
+
+### Connection Pool для производительности
+
+```typescript
+import { ConnectionPool } from 'surrealdb-orm/performance';
+
+const pool = new ConnectionPool(
+	{
+		rpc: 'ws://localhost:3603/rpc',
+		namespace: 'test',
+		database: 'test_db',
+		user: 'root',
+		pass: 'password',
+		minConnections: 2,
+		maxConnections: 10,
+	},
+	new SimpleLogger(),
+	new SimpleFuture()
+);
+
+// Получить соединение из пула
+const connection = await pool.acquire();
+
+// Использовать соединение
+const orm = createEnhancedORM(connection, queryEngine, schema);
+
+// Вернуть соединение в пул
+await pool.release(connection);
+```
+
+### Кэширование
+
+```typescript
+import { CacheManager, MemoryCache } from 'surrealdb-orm/cache';
+
+const cache = new CacheManager({
+	defaultTTL: 300000, // 5 минут
+	maxSize: 1000,
+	strategy: 'LRU',
+});
+
+// Кэширование запросов
+const cachedUsers = await cache.get('users:all', async () => {
+	return await usersTable.findAll();
+});
+
+// Инвалидация кэша
+await cache.invalidateTable('users');
+```
+
+### Валидация данных
+
+```typescript
+import { SchemaValidator } from 'surrealdb-orm/validation';
+
+const validator = new SchemaValidator(schema);
+
+// Валидация перед созданием
+const validationResult = validator.validateRecord('users', userData);
+if (!validationResult.isValid) {
+	console.error('Ошибки валидации:', validationResult.errors);
+}
+
+// Создание с валидацией
+const user = await usersTable.createRecord(userData, { validate: true });
+```
+
+### Система миграций
+
+```typescript
+import { MigrationManager } from 'surrealdb-orm/migrations';
+
+const migrationManager = new MigrationManager(queryEngine, logger);
+
+// Регистрация миграции
+migrationManager.registerMigration({
+	version: '20240101000001',
+	name: 'create_users_table',
+	description: 'Создание таблицы пользователей',
+	up: async (queryEngine) => {
+		await queryEngine.query(`
+			DEFINE TABLE users SCHEMALESS;
+			DEFINE FIELD email ON TABLE users TYPE string ASSERT string::is::email($value);
+		`);
+	},
+	down: async (queryEngine) => {
+		await queryEngine.query('REMOVE TABLE users;');
+	},
+});
+
+// Применение миграций
+await migrationManager.migrate();
+```
+
+### Мониторинг и метрики
+
+```typescript
+import { MetricsCollector } from 'surrealdb-orm/monitoring';
+
+const metrics = new MetricsCollector(
+	{
+		collectionInterval: 10000,
+		retentionPeriod: 300000,
+	},
+	logger
+);
+
+// Сбор метрик
+metrics.increment('queries_total');
+metrics.timer('query_duration', 150);
+metrics.gauge('active_connections', 5);
+
+// Получение статистики
+const stats = metrics.getStats();
+console.log('Метрики:', stats);
+```
+
+### Безопасность
+
+```typescript
+import { SQLInjectionValidator, AuditLogger } from 'surrealdb-orm/security';
+
+const sqlValidator = new SQLInjectionValidator();
+const auditLogger = new AuditLogger(logger);
+
+// Проверка SQL на инъекции
+const isSafe = sqlValidator.validateQuery('SELECT * FROM users WHERE id = $id');
+if (!isSafe) {
+	throw new Error('Потенциальная SQL-инъекция');
+}
+
+// Аудит операций
+await auditLogger.logOperation({
+	operation: 'CREATE',
+	table: 'users',
+	userId: 'user:123',
+	data: { email: 'user@example.com' },
+});
+```
+
 ## Типы полей
 
 ### Поддерживаемые типы
 
--   `string` - строковые значения
--   `number` - числовые значения
--   `boolean` - логические значения
--   `datetime` - дата и время
--   `object` - объекты
--   `array` - массивы (поддержка `array<string>`, `array<number>`, `array<record<users>>`, `array<object>` с nested подполями)
--   `record` - ссылки на другие таблицы
--   `literals` — набор допустимых значений с генерацией `ASSERT $value IN [...]`
+- `string` - строковые значения
+- `number` - числовые значения
+- `boolean` - логические значения
+- `datetime` - дата и время
+- `object` - объекты
+- `array` - массивы (поддержка `array<string>`, `array<number>`, `array<record<users>>`, `array<object>` с nested подполями)
+- `record` - ссылки на другие таблицы
+- `literals` — набор допустимых значений с генерацией `ASSERT $value IN [...]`
 
 ### Примеры полей
 
@@ -431,31 +628,100 @@ await rpc.withTransaction(async () => {
 
 ## API Reference
 
-### Table<Config>
+### Основные классы
 
--   `create()` - создать таблицу
--   `drop()` - удалить таблицу
--   `createRecord(data)` - создать запись
--   `findById(id)` - найти запись по ID
--   `findAll()` - найти все записи
--   `updateRecord(id, data)` - обновить запись
--   `deleteRecord(id)` - удалить запись
+#### Table<Config>
 
-### SurrealORM<Schema>
+- `create()` - создать таблицу
+- `drop()` - удалить таблицу
+- `createRecord(data, options?)` - создать запись
+- `findById(id)` - найти запись по ID
+- `findAll()` - найти все записи
+- `updateRecord(id, data)` - обновить запись
+- `deleteRecord(id)` - удалить запись
 
--   `table(name)` - получить таблицу по имени
--   `createTables()` - создать все таблицы
--   `dropTables()` - удалить все таблицы
--   `sync()` - синхронизировать схему
--   `migrateV2()` - гарантировать схему (idempotent DEFINE)
--   `migrateMissing()` - упрощённая миграция только недостающих сущностей
--   `planDiff()` / `applyDiff()` - дифф‑миграции (ALTER/OVERWRITE/DEFINE)
--   `introspectDatabase()` / `introspectTable()` - интроспекция (INFO FOR DB/TABLE)
+#### Enhanced ORM
+
+- `table(name)` - получить таблицу по имени
+- `sync()` - синхронизировать схему
+- `getStats()` - получить статистику ORM
+
+#### ConnectionManager
+
+- `connect()` - подключиться к базе
+- `disconnect()` - отключиться
+- `query(sql, params?)` - выполнить запрос
+
+#### QueryEngine
+
+- `query(sql, params?)` - выполнить запрос
+- `getPerformanceStats()` - получить статистику производительности
+
+### Расширенные классы
+
+#### ConnectionPool
+
+- `acquire()` - получить соединение из пула
+- `release(connection)` - вернуть соединение в пул
+- `getStats()` - получить статистику пула
+- `close()` - закрыть пул
+
+#### CacheManager
+
+- `get(key, factory)` - получить значение из кэша
+- `set(key, value, ttl?)` - установить значение в кэш
+- `invalidate(key)` - инвалидировать ключ
+- `invalidateTable(table)` - инвалидировать кэш таблицы
+
+#### SchemaValidator
+
+- `validateRecord(table, data)` - валидировать запись
+- `validateField(table, field, value)` - валидировать поле
+
+#### MigrationManager
+
+- `registerMigration(migration)` - зарегистрировать миграцию
+- `migrate()` - применить миграции
+- `getStatus()` - получить статус миграций
+
+#### MetricsCollector
+
+- `increment(name, value?, labels?)` - увеличить счетчик
+- `timer(name, value)` - записать время выполнения
+- `gauge(name, value)` - установить значение метрики
+- `getStats()` - получить статистику
+
+#### SQLInjectionValidator
+
+- `validateQuery(query)` - проверить запрос на инъекции
+
+#### AuditLogger
+
+- `logOperation(operation)` - записать операцию в аудит
 
 ### Генерация типов
 
--   Пространства имён: `DB.*` (c `id` как `table:${string}`) и `Plain.*` (доменные типы)
--   Алиасы входов по таблицам: `CreateInput_<table>`, `UpdateInput_<table>`
-    -   Create исключает `id`, `readonly`, `valueExpr`; обязательность = `required` без `default`
-    -   Update — Partial только по обновляемым полям
--   Утилиты: `RecordId<T>`, `DeepPartial<T>`, `CreateInput<T>`, `UpdateInput<T>`
+- Пространства имён: `DB.*` (c `id` как `table:${string}`) и `Plain.*` (доменные типы)
+- Алиасы входов по таблицам: `CreateInput_<table>`, `UpdateInput_<table>`
+    - Create исключает `id`, `readonly`, `valueExpr`; обязательность = `required` без `default`
+    - Update — Partial только по обновляемым полям
+- Утилиты: `RecordId<T>`, `DeepPartial<T>`, `CreateInput<T>`, `UpdateInput<T>`
+
+## Требования
+
+- Node.js >= 18.0.0
+- TypeScript >= 5.0.0
+- SurrealDB server
+
+## Зависимости
+
+- `ws` - WebSocket клиент для подключения к SurrealDB
+
+## Дополнительные примеры
+
+Смотрите файл `examples/enhanced-examples.ts` для подробных примеров использования всех возможностей Enhanced ORM.
+
+## Поддержка
+
+- GitHub: https://github.com/FrankFMY/surrealdb-orm-enhanced
+- Issues: https://github.com/FrankFMY/surrealdb-orm-enhanced/issues
