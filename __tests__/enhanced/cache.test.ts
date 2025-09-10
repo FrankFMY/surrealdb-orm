@@ -95,8 +95,8 @@ describe('MemoryCache', () => {
       // Access key1 to make it recently used
       await cache.get('key1');
       
-      // Add more items to trigger eviction
-      for (let i = 4; i <= 10; i++) {
+      // Add more items to trigger eviction (11 items total, maxSize is 10)
+      for (let i = 4; i <= 11; i++) {
         await cache.set(`key${i}`, `value${i}`);
       }
       

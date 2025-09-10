@@ -2,420 +2,482 @@
  * Система пула подключений для SurrealDB ORM
  */
 
-import type { ConnectionManager, ConnectionConfig } from '../core/connection.js';
-import type { ILogger, Future } from '../helpers.js';
+import { ConnectionManager } from '../core/connection';
+import type { ConnectionConfig } from '../core/connection';
+import type { ILogger, Future } from '../../helpers';
 
 // Конфигурация пула
 export interface PoolConfig extends ConnectionConfig {
-  minConnections?: number;
-  maxConnections?: number;
-  acquireTimeout?: number;
-  releaseTimeout?: number;
-  idleTimeout?: number;
-  healthCheckInterval?: number;
-  retryAttempts?: number;
-  retryDelay?: number;
+	minConnections?: number;
+	maxConnections?: number;
+	acquireTimeout?: number;
+	releaseTimeout?: number;
+	idleTimeout?: number;
+	healthCheckInterval?: number;
+	retryAttempts?: number;
+	retryDelay?: number;
 }
 
 // Состояние подключения в пуле
 export interface PooledConnection {
-  connection: ConnectionManager;
-  inUse: boolean;
-  lastUsed: number;
-  createdAt: number;
-  healthCheckCount: number;
-  lastHealthCheck: number;
+	connection: ConnectionManager;
+	inUse: boolean;
+	lastUsed: number;
+	createdAt: number;
+	healthCheckCount: number;
+	lastHealthCheck: number;
 }
 
 // Статистика пула
 export interface PoolStats {
-  totalConnections: number;
-  activeConnections: number;
-  idleConnections: number;
-  waitingRequests: number;
-  totalRequests: number;
-  successfulRequests: number;
-  failedRequests: number;
-  avgAcquisitionTime: number;
-  avgConnectionLifetime: number;
+	totalConnections: number;
+	activeConnections: number;
+	idleConnections: number;
+	waitingRequests: number;
+	totalRequests: number;
+	successfulRequests: number;
+	failedRequests: number;
+	avgAcquisitionTime: number;
+	avgConnectionLifetime: number;
 }
 
 // Пул подключений
 export class ConnectionPool {
-  private connections: PooledConnection[] = [];
-  private waitingQueue: Array<{
-    resolve: (connection: ConnectionManager) => void;
-    reject: (error: Error) => void;
-    timestamp: number;
-  }> = [];
-  private config: Required<PoolConfig>;
-  private logger: ILogger;
-  private future: Future;
-  private healthCheckTimer?: NodeJS.Timeout;
-  private cleanupTimer?: NodeJS.Timeout;
-  private stats = {
-    totalRequests: 0,
-    successfulRequests: 0,
-    failedRequests: 0,
-    totalAcquisitionTime: 0
-  };
+	private connections: PooledConnection[] = [];
+	private waitingQueue: Array<{
+		resolve: (connection: ConnectionManager) => void;
+		reject: (error: Error) => void;
+		timestamp: number;
+		timeout: NodeJS.Timeout;
+	}> = [];
+	private config: Required<PoolConfig> & ConnectionConfig;
+	private logger: ILogger;
+	private future: Future;
+	private healthCheckTimer?: NodeJS.Timeout;
+	private cleanupTimer?: NodeJS.Timeout;
+	private stats = {
+		totalRequests: 0,
+		successfulRequests: 0,
+		failedRequests: 0,
+		totalAcquisitionTime: 0,
+	};
 
-  constructor(
-    config: PoolConfig,
-    logger: ILogger,
-    future: Future
-  ) {
-    this.config = {
-      minConnections: config.minConnections ?? 2,
-      maxConnections: config.maxConnections ?? 10,
-      acquireTimeout: config.acquireTimeout ?? 30000,
-      releaseTimeout: config.releaseTimeout ?? 5000,
-      idleTimeout: config.idleTimeout ?? 300000, // 5 минут
-      healthCheckInterval: config.healthCheckInterval ?? 60000, // 1 минута
-      retryAttempts: config.retryAttempts ?? 3,
-      retryDelay: config.retryDelay ?? 1000,
-      ...config
-    };
-    this.logger = logger;
-    this.future = future;
+	constructor(config: PoolConfig, logger: ILogger, future: Future) {
+		this.config = {
+			minConnections: config.minConnections ?? 2,
+			maxConnections: config.maxConnections ?? 10,
+			acquireTimeout: config.acquireTimeout ?? 30000,
+			releaseTimeout: config.releaseTimeout ?? 5000,
+			idleTimeout: config.idleTimeout ?? 300000, // 5 минут
+			healthCheckInterval: config.healthCheckInterval ?? 60000, // 1 минута
+			retryAttempts: config.retryAttempts ?? 3,
+			retryDelay: config.retryDelay ?? 1000,
+			timeout: config.timeout ?? 30000,
+			heartbeatInterval: config.heartbeatInterval ?? 30000,
+			reconnectOnClose: config.reconnectOnClose ?? true,
+			maxReconnectAttempts: config.maxReconnectAttempts ?? 10,
+			reconnectDelay: config.reconnectDelay ?? 5000,
+			rpc: config.rpc,
+			namespace: config.namespace,
+			database: config.database,
+			user: config.user,
+			pass: config.pass,
+		};
+		this.logger = logger;
+		this.future = future;
 
-    this.initialize();
-  }
+		this.initialize();
+	}
 
-  /**
-   * Инициализация пула
-   */
-  private async initialize(): Promise<void> {
-    try {
-      // Создание минимального количества подключений
-      for (let i = 0; i < this.config.minConnections; i++) {
-        await this.createConnection();
-      }
+	/**
+	 * Инициализация пула
+	 */
+	private async initialize(): Promise<void> {
+		try {
+			// Создание минимального количества подключений
+			for (let i = 0; i < this.config.minConnections; i++) {
+				await this.createConnection();
+			}
 
-      // Запуск health check
-      this.startHealthCheck();
-      
-      // Запуск очистки неактивных подключений
-      this.startCleanup();
+			// Запуск health check
+			this.startHealthCheck();
 
-      this.logger.info({ module: 'ConnectionPool', method: 'initialize' }, 
-        `Pool initialized with ${this.config.minConnections} connections`);
-    } catch (error) {
-      this.logger.error({ module: 'ConnectionPool', method: 'initialize' }, 
-        'Failed to initialize pool', error);
-      throw error;
-    }
-  }
+			// Запуск очистки неактивных подключений
+			this.startCleanup();
 
-  /**
-   * Получение подключения из пула
-   */
-  async acquire(): Promise<ConnectionManager> {
-    const startTime = Date.now();
-    this.stats.totalRequests++;
+			this.logger.info(
+				{ module: 'ConnectionPool', method: 'initialize' },
+				`Pool initialized with ${this.config.minConnections} connections`
+			);
+		} catch (error) {
+			this.logger.error(
+				{ module: 'ConnectionPool', method: 'initialize' },
+				`Failed to initialize pool: ${error instanceof Error ? error.message : 'Unknown error'}`
+			);
+			throw error;
+		}
+	}
 
-    try {
-      // Поиск свободного подключения
-      let pooledConnection = this.connections.find(conn => !conn.inUse && conn.connection.isConnected());
-      
-      if (!pooledConnection) {
-        // Создание нового подключения, если не достигнут лимит
-        if (this.connections.length < this.config.maxConnections) {
-          pooledConnection = await this.createConnection();
-        } else {
-          // Ожидание освобождения подключения
-          pooledConnection = await this.waitForConnection();
-        }
-      }
+	/**
+	 * Получение подключения из пула
+	 */
+	async acquire(): Promise<ConnectionManager> {
+		const startTime = Date.now();
+		this.stats.totalRequests++;
 
-      if (!pooledConnection) {
-        throw new Error('Failed to acquire connection');
-      }
+		try {
+			// Поиск свободного подключения
+			let pooledConnection = this.connections.find(
+				(conn) => !conn.inUse && conn.connection.isConnected()
+			);
 
-      // Помечаем подключение как используемое
-      pooledConnection.inUse = true;
-      pooledConnection.lastUsed = Date.now();
+			if (!pooledConnection) {
+				// Создание нового подключения, если не достигнут лимит
+				if (this.connections.length < this.config.maxConnections) {
+					pooledConnection = await this.createConnection();
+				} else {
+					// Ожидание освобождения подключения
+					pooledConnection = await this.waitForConnection();
+				}
+			}
 
-      const acquisitionTime = Date.now() - startTime;
-      this.stats.totalAcquisitionTime += acquisitionTime;
-      this.stats.successfulRequests++;
+			if (!pooledConnection) {
+				throw new Error('Failed to acquire connection');
+			}
 
-      this.logger.debug({ module: 'ConnectionPool', method: 'acquire' }, 
-        `Connection acquired in ${acquisitionTime}ms`);
+			// Помечаем подключение как используемое
+			pooledConnection.inUse = true;
+			pooledConnection.lastUsed = Date.now();
 
-      return pooledConnection.connection;
+			const acquisitionTime = Date.now() - startTime;
+			this.stats.totalAcquisitionTime += acquisitionTime;
+			this.stats.successfulRequests++;
 
-    } catch (error) {
-      this.stats.failedRequests++;
-      this.logger.error({ module: 'ConnectionPool', method: 'acquire' }, 
-        'Failed to acquire connection', error);
-      throw error;
-    }
-  }
+			this.logger.debug(
+				{ module: 'ConnectionPool', method: 'acquire' },
+				`Connection acquired in ${acquisitionTime}ms`
+			);
 
-  /**
-   * Возврат подключения в пул
-   */
-  async release(connection: ConnectionManager): Promise<void> {
-    const pooledConnection = this.connections.find(conn => conn.connection === connection);
-    
-    if (!pooledConnection) {
-      this.logger.warn({ module: 'ConnectionPool', method: 'release' }, 
-        'Attempted to release unknown connection');
-      return;
-    }
+			return pooledConnection.connection;
+		} catch (error) {
+			this.stats.failedRequests++;
+			this.logger.error(
+				{ module: 'ConnectionPool', method: 'acquire' },
+				`Failed to acquire connection: ${error instanceof Error ? error.message : 'Unknown error'}`
+			);
+			throw error;
+		}
+	}
 
-    // Проверка состояния подключения
-    if (!connection.isConnected()) {
-      this.logger.warn({ module: 'ConnectionPool', method: 'release' }, 
-        'Released connection is not connected, removing from pool');
-      await this.removeConnection(pooledConnection);
-      return;
-    }
+	/**
+	 * Возврат подключения в пул
+	 */
+	async release(connection: ConnectionManager): Promise<void> {
+		const pooledConnection = this.connections.find(
+			(conn) => conn.connection === connection
+		);
 
-    // Освобождение подключения
-    pooledConnection.inUse = false;
-    pooledConnection.lastUsed = Date.now();
+		if (!pooledConnection) {
+			this.logger.warn(
+				{ module: 'ConnectionPool', method: 'release' },
+				'Attempted to release unknown connection'
+			);
+			return;
+		}
 
-    // Обработка ожидающих запросов
-    this.processWaitingQueue();
+		// Проверка состояния подключения
+		if (!connection.isConnected()) {
+			this.logger.warn(
+				{ module: 'ConnectionPool', method: 'release' },
+				'Released connection is not connected, removing from pool'
+			);
+			await this.removeConnection(pooledConnection);
+			return;
+		}
 
-    this.logger.debug({ module: 'ConnectionPool', method: 'release' }, 
-      'Connection released back to pool');
-  }
+		// Освобождение подключения
+		pooledConnection.inUse = false;
+		pooledConnection.lastUsed = Date.now();
 
-  /**
-   * Создание нового подключения
-   */
-  private async createConnection(): Promise<PooledConnection> {
-    const connection = new ConnectionManager(this.config, this.logger, this.future);
-    
-    try {
-      await connection.connect();
-      
-      const pooledConnection: PooledConnection = {
-        connection,
-        inUse: false,
-        lastUsed: Date.now(),
-        createdAt: Date.now(),
-        healthCheckCount: 0,
-        lastHealthCheck: Date.now()
-      };
+		// Обработка ожидающих запросов
+		this.processWaitingQueue();
 
-      this.connections.push(pooledConnection);
-      
-      this.logger.info({ module: 'ConnectionPool', method: 'createConnection' }, 
-        `New connection created. Pool size: ${this.connections.length}`);
-      
-      return pooledConnection;
-    } catch (error) {
-      this.logger.error({ module: 'ConnectionPool', method: 'createConnection' }, 
-        'Failed to create connection', error);
-      throw error;
-    }
-  }
+		this.logger.debug(
+			{ module: 'ConnectionPool', method: 'release' },
+			'Connection released back to pool'
+		);
+	}
 
-  /**
-   * Ожидание освобождения подключения
-   */
-  private async waitForConnection(): Promise<PooledConnection | null> {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        const index = this.waitingQueue.findIndex(req => req.resolve === resolve);
-        if (index > -1) {
-          this.waitingQueue.splice(index, 1);
-        }
-        reject(new Error('Connection acquisition timeout'));
-      }, this.config.acquireTimeout);
+	/**
+	 * Создание нового подключения
+	 */
+	private async createConnection(): Promise<PooledConnection> {
+		const connection = new ConnectionManager(
+			this.config,
+			this.logger,
+			this.future
+		);
 
-      this.waitingQueue.push({
-        resolve: (connection: ConnectionManager) => {
-          clearTimeout(timeout);
-          const pooledConnection = this.connections.find(conn => conn.connection === connection);
-          resolve(pooledConnection || null);
-        },
-        reject: (error: Error) => {
-          clearTimeout(timeout);
-          reject(error);
-        },
-        timestamp: Date.now()
-      });
-    });
-  }
+		try {
+			await connection.connect();
 
-  /**
-   * Обработка очереди ожидания
-   */
-  private processWaitingQueue(): void {
-    if (this.waitingQueue.length === 0) return;
+			const pooledConnection: PooledConnection = {
+				connection,
+				inUse: false,
+				lastUsed: Date.now(),
+				createdAt: Date.now(),
+				healthCheckCount: 0,
+				lastHealthCheck: Date.now(),
+			};
 
-    const availableConnection = this.connections.find(conn => !conn.inUse && conn.connection.isConnected());
-    if (!availableConnection) return;
+			this.connections.push(pooledConnection);
 
-    const waitingRequest = this.waitingQueue.shift();
-    if (waitingRequest) {
-      availableConnection.inUse = true;
-      availableConnection.lastUsed = Date.now();
-      waitingRequest.resolve(availableConnection.connection);
-    }
-  }
+			this.logger.info(
+				{ module: 'ConnectionPool', method: 'createConnection' },
+				`New connection created. Pool size: ${this.connections.length}`
+			);
 
-  /**
-   * Удаление подключения из пула
-   */
-  private async removeConnection(pooledConnection: PooledConnection): Promise<void> {
-    const index = this.connections.indexOf(pooledConnection);
-    if (index > -1) {
-      this.connections.splice(index, 1);
-      
-      try {
-        await pooledConnection.connection.disconnect();
-      } catch (error) {
-        this.logger.warn({ module: 'ConnectionPool', method: 'removeConnection' }, 
-          'Error disconnecting connection', error);
-      }
-    }
-  }
+			return pooledConnection;
+		} catch (error) {
+			this.logger.error(
+				{ module: 'ConnectionPool', method: 'createConnection' },
+				`Failed to create connection: ${error instanceof Error ? error.message : 'Unknown error'}`
+			);
+			throw error;
+		}
+	}
 
-  /**
-   * Запуск health check
-   */
-  private startHealthCheck(): void {
-    this.healthCheckTimer = setInterval(async () => {
-      await this.performHealthCheck();
-    }, this.config.healthCheckInterval);
-  }
+	/**
+	 * Ожидание освобождения подключения
+	 */
+	private async waitForConnection(): Promise<PooledConnection | undefined> {
+		return new Promise((resolve, reject) => {
+			const timeout = setTimeout(() => {
+				const index = this.waitingQueue.findIndex(
+					(req) => req.timeout === timeout
+				);
+				if (index > -1) {
+					this.waitingQueue.splice(index, 1);
+				}
+				reject(new Error('Connection acquisition timeout'));
+			}, this.config.acquireTimeout);
 
-  /**
-   * Выполнение health check
-   */
-  private async performHealthCheck(): Promise<void> {
-    for (const pooledConnection of this.connections) {
-      try {
-        if (!pooledConnection.connection.isConnected()) {
-          this.logger.warn({ module: 'ConnectionPool', method: 'performHealthCheck' }, 
-            'Unhealthy connection detected, removing from pool');
-          await this.removeConnection(pooledConnection);
-          continue;
-        }
+			this.waitingQueue.push({
+				resolve: (connection: ConnectionManager) => {
+					clearTimeout(timeout);
+					const pooledConnection = this.connections.find(
+						(conn) => conn.connection === connection
+					);
+					resolve(pooledConnection || undefined);
+				},
+				reject: (error: Error) => {
+					clearTimeout(timeout);
+					reject(error);
+				},
+				timestamp: Date.now(),
+				timeout,
+			});
+		});
+	}
 
-        // Простой ping для проверки соединения
-        await pooledConnection.connection.send({ method: 'ping', params: [] });
-        
-        pooledConnection.healthCheckCount++;
-        pooledConnection.lastHealthCheck = Date.now();
+	/**
+	 * Обработка очереди ожидания
+	 */
+	private processWaitingQueue(): void {
+		if (this.waitingQueue.length === 0) return;
 
-      } catch (error) {
-        this.logger.warn({ module: 'ConnectionPool', method: 'performHealthCheck' }, 
-          'Health check failed for connection', error);
-        await this.removeConnection(pooledConnection);
-      }
-    }
+		const availableConnection = this.connections.find(
+			(conn) => !conn.inUse && conn.connection.isConnected()
+		);
+		if (!availableConnection) return;
 
-    // Восстановление минимального количества подключений
-    while (this.connections.length < this.config.minConnections) {
-      try {
-        await this.createConnection();
-      } catch (error) {
-        this.logger.error({ module: 'ConnectionPool', method: 'performHealthCheck' }, 
-          'Failed to restore connection during health check', error);
-        break;
-      }
-    }
-  }
+		const waitingRequest = this.waitingQueue.shift();
+		if (waitingRequest) {
+			availableConnection.inUse = true;
+			availableConnection.lastUsed = Date.now();
+			waitingRequest.resolve(availableConnection.connection);
+		}
+	}
 
-  /**
-   * Запуск очистки неактивных подключений
-   */
-  private startCleanup(): void {
-    this.cleanupTimer = setInterval(async () => {
-      await this.cleanupIdleConnections();
-    }, this.config.idleTimeout / 2);
-  }
+	/**
+	 * Удаление подключения из пула
+	 */
+	private async removeConnection(
+		pooledConnection: PooledConnection
+	): Promise<void> {
+		const index = this.connections.indexOf(pooledConnection);
+		if (index > -1) {
+			this.connections.splice(index, 1);
 
-  /**
-   * Очистка неактивных подключений
-   */
-  private async cleanupIdleConnections(): Promise<void> {
-    const now = Date.now();
-    const connectionsToRemove: PooledConnection[] = [];
+			try {
+				await pooledConnection.connection.disconnect();
+			} catch (error) {
+				this.logger.warn(
+					{ module: 'ConnectionPool', method: 'removeConnection' },
+					`Error disconnecting connection: ${error instanceof Error ? error.message : 'Unknown error'}`
+				);
+			}
+		}
+	}
 
-    for (const pooledConnection of this.connections) {
-      if (!pooledConnection.inUse && 
-          (now - pooledConnection.lastUsed) > this.config.idleTimeout &&
-          this.connections.length > this.config.minConnections) {
-        connectionsToRemove.push(pooledConnection);
-      }
-    }
+	/**
+	 * Запуск health check
+	 */
+	private startHealthCheck(): void {
+		this.healthCheckTimer = setInterval(async () => {
+			await this.performHealthCheck();
+		}, this.config.healthCheckInterval);
+	}
 
-    for (const connection of connectionsToRemove) {
-      await this.removeConnection(connection);
-    }
+	/**
+	 * Выполнение health check
+	 */
+	private async performHealthCheck(): Promise<void> {
+		for (const pooledConnection of this.connections) {
+			try {
+				if (!pooledConnection.connection.isConnected()) {
+					this.logger.warn(
+						{
+							module: 'ConnectionPool',
+							method: 'performHealthCheck',
+						},
+						'Unhealthy connection detected, removing from pool'
+					);
+					await this.removeConnection(pooledConnection);
+					continue;
+				}
 
-    if (connectionsToRemove.length > 0) {
-      this.logger.info({ module: 'ConnectionPool', method: 'cleanupIdleConnections' }, 
-        `Cleaned up ${connectionsToRemove.length} idle connections`);
-    }
-  }
+				// Простой ping для проверки соединения
+				await pooledConnection.connection.send({
+					method: 'ping',
+					params: [],
+				});
 
-  /**
-   * Получение статистики пула
-   */
-  getStats(): PoolStats {
-    const activeConnections = this.connections.filter(conn => conn.inUse).length;
-    const idleConnections = this.connections.filter(conn => !conn.inUse).length;
-    const avgAcquisitionTime = this.stats.totalRequests > 0 
-      ? this.stats.totalAcquisitionTime / this.stats.totalRequests 
-      : 0;
-    const avgConnectionLifetime = this.connections.length > 0
-      ? this.connections.reduce((sum, conn) => sum + (Date.now() - conn.createdAt), 0) / this.connections.length
-      : 0;
+				pooledConnection.healthCheckCount++;
+				pooledConnection.lastHealthCheck = Date.now();
+			} catch (error) {
+				this.logger.warn(
+					{ module: 'ConnectionPool', method: 'performHealthCheck' },
+					`Health check failed for connection: ${error instanceof Error ? error.message : 'Unknown error'}`
+				);
+				await this.removeConnection(pooledConnection);
+			}
+		}
 
-    return {
-      totalConnections: this.connections.length,
-      activeConnections,
-      idleConnections,
-      waitingRequests: this.waitingQueue.length,
-      totalRequests: this.stats.totalRequests,
-      successfulRequests: this.stats.successfulRequests,
-      failedRequests: this.stats.failedRequests,
-      avgAcquisitionTime,
-      avgConnectionLifetime
-    };
-  }
+		// Восстановление минимального количества подключений
+		while (this.connections.length < this.config.minConnections) {
+			try {
+				await this.createConnection();
+			} catch (error) {
+				this.logger.error(
+					{ module: 'ConnectionPool', method: 'performHealthCheck' },
+					`Failed to restore connection during health check: ${error instanceof Error ? error.message : 'Unknown error'}`
+				);
+				break;
+			}
+		}
+	}
 
-  /**
-   * Закрытие пула
-   */
-  async close(): Promise<void> {
-    // Остановка таймеров
-    if (this.healthCheckTimer) {
-      clearInterval(this.healthCheckTimer);
-    }
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-    }
+	/**
+	 * Запуск очистки неактивных подключений
+	 */
+	private startCleanup(): void {
+		this.cleanupTimer = setInterval(async () => {
+			await this.cleanupIdleConnections();
+		}, this.config.idleTimeout / 2);
+	}
 
-    // Отклонение всех ожидающих запросов
-    for (const waitingRequest of this.waitingQueue) {
-      waitingRequest.reject(new Error('Pool is closing'));
-    }
-    this.waitingQueue = [];
+	/**
+	 * Очистка неактивных подключений
+	 */
+	private async cleanupIdleConnections(): Promise<void> {
+		const now = Date.now();
+		const connectionsToRemove: PooledConnection[] = [];
 
-    // Закрытие всех подключений
-    await Promise.all(
-      this.connections.map(conn => conn.connection.disconnect())
-    );
+		for (const pooledConnection of this.connections) {
+			if (
+				!pooledConnection.inUse &&
+				now - pooledConnection.lastUsed > this.config.idleTimeout &&
+				this.connections.length > this.config.minConnections
+			) {
+				connectionsToRemove.push(pooledConnection);
+			}
+		}
 
-    this.connections = [];
-    this.logger.info({ module: 'ConnectionPool', method: 'close' }, 'Pool closed');
-  }
+		for (const connection of connectionsToRemove) {
+			await this.removeConnection(connection);
+		}
+
+		if (connectionsToRemove.length > 0) {
+			this.logger.info(
+				{ module: 'ConnectionPool', method: 'cleanupIdleConnections' },
+				`Cleaned up ${connectionsToRemove.length} idle connections`
+			);
+		}
+	}
+
+	/**
+	 * Получение статистики пула
+	 */
+	getStats(): PoolStats {
+		const activeConnections = this.connections.filter(
+			(conn) => conn.inUse
+		).length;
+		const idleConnections = this.connections.filter(
+			(conn) => !conn.inUse
+		).length;
+		const avgAcquisitionTime =
+			this.stats.totalRequests > 0 ?
+				this.stats.totalAcquisitionTime / this.stats.totalRequests
+			:	0;
+		const avgConnectionLifetime =
+			this.connections.length > 0 ?
+				this.connections.reduce(
+					(sum, conn) => sum + (Date.now() - conn.createdAt),
+					0
+				) / this.connections.length
+			:	0;
+
+		return {
+			totalConnections: this.connections.length,
+			activeConnections,
+			idleConnections,
+			waitingRequests: this.waitingQueue.length,
+			totalRequests: this.stats.totalRequests,
+			successfulRequests: this.stats.successfulRequests,
+			failedRequests: this.stats.failedRequests,
+			avgAcquisitionTime,
+			avgConnectionLifetime,
+		};
+	}
+
+	/**
+	 * Закрытие пула
+	 */
+	async close(): Promise<void> {
+		// Остановка таймеров
+		if (this.healthCheckTimer) {
+			clearInterval(this.healthCheckTimer);
+		}
+		if (this.cleanupTimer) {
+			clearInterval(this.cleanupTimer);
+		}
+
+		// Отклонение всех ожидающих запросов
+		for (const waitingRequest of this.waitingQueue) {
+			waitingRequest.reject(new Error('Pool is closing'));
+		}
+		this.waitingQueue = [];
+
+		// Закрытие всех подключений
+		await Promise.all(
+			this.connections.map((conn) => conn.connection.disconnect())
+		);
+
+		this.connections = [];
+		this.logger.info(
+			{ module: 'ConnectionPool', method: 'close' },
+			'Pool closed'
+		);
+	}
 }
-
-// Экспорт
-export {
-  PoolConfig,
-  PooledConnection,
-  PoolStats,
-  ConnectionPool
-};

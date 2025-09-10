@@ -4,444 +4,505 @@
 
 import { EventEmitter } from 'events';
 import WebSocket from 'ws';
-import type { SurrealENV } from '../types.js';
-import type { ILogger, Future } from '../helpers.js';
-import { ConnectionError, AuthenticationError, TimeoutError } from '../errors/index.js';
+import type { SurrealENV } from '../../types';
+import type { ILogger, Future } from '../../helpers';
+import { ConnectionError, AuthenticationError, TimeoutError } from '../errors';
 
 // Состояния подключения
 export enum ConnectionState {
-  DISCONNECTED = 'disconnected',
-  CONNECTING = 'connecting',
-  CONNECTED = 'connected',
-  AUTHENTICATING = 'authenticating',
-  AUTHENTICATED = 'authenticated',
-  ERROR = 'error'
+	DISCONNECTED = 'disconnected',
+	CONNECTING = 'connecting',
+	CONNECTED = 'connected',
+	AUTHENTICATING = 'authenticating',
+	AUTHENTICATED = 'authenticated',
+	ERROR = 'error',
 }
 
 // Конфигурация подключения
 export interface ConnectionConfig extends SurrealENV {
-  timeout?: number;
-  retryAttempts?: number;
-  retryDelay?: number;
-  heartbeatInterval?: number;
-  reconnectOnClose?: boolean;
-  maxReconnectAttempts?: number;
-  reconnectDelay?: number;
+	timeout?: number;
+	retryAttempts?: number;
+	retryDelay?: number;
+	heartbeatInterval?: number;
+	reconnectOnClose?: boolean;
+	maxReconnectAttempts?: number;
+	reconnectDelay?: number;
 }
 
 // События подключения
 export interface ConnectionEvents {
-  'stateChange': (state: ConnectionState, previousState: ConnectionState) => void;
-  'connected': () => void;
-  'disconnected': () => void;
-  'error': (error: Error) => void;
-  'message': (message: any) => void;
-  'heartbeat': () => void;
+	stateChange: (
+		state: ConnectionState,
+		previousState: ConnectionState
+	) => void;
+	connected: () => void;
+	disconnected: () => void;
+	error: (error: Error) => void;
+	message: (message: any) => void;
+	heartbeat: () => void;
 }
 
 // Менеджер подключений
 export class ConnectionManager extends EventEmitter {
-  private ws: WebSocket | null = null;
-  private state: ConnectionState = ConnectionState.DISCONNECTED;
-  private config: Required<ConnectionConfig>;
-  private logger: ILogger;
-  private future: Future;
-  private heartbeatTimer: NodeJS.Timeout | null = null;
-  private reconnectTimer: NodeJS.Timeout | null = null;
-  private reconnectAttempts = 0;
-  private messageQueue: Array<{ message: any; resolve: Function; reject: Function }> = [];
-  private pendingMessages = new Map<string, { resolve: Function; reject: Function; timeout: NodeJS.Timeout }>();
+	private ws: WebSocket | null = null;
+	private state: ConnectionState = ConnectionState.DISCONNECTED;
+	private config: Required<ConnectionConfig> & SurrealENV;
+	private logger: ILogger;
+	private future: Future;
+	private heartbeatTimer: NodeJS.Timeout | null = null;
+	private reconnectTimer: NodeJS.Timeout | null = null;
+	private reconnectAttempts = 0;
+	private messageQueue: Array<{
+		message: any;
+		resolve: Function;
+		reject: Function;
+	}> = [];
+	private pendingMessages = new Map<
+		string,
+		{ resolve: Function; reject: Function; timeout: NodeJS.Timeout }
+	>();
 
-  constructor(
-    config: ConnectionConfig,
-    logger: ILogger,
-    future: Future
-  ) {
-    super();
-    this.config = {
-      timeout: config.timeout ?? 30000,
-      retryAttempts: config.retryAttempts ?? 3,
-      retryDelay: config.retryDelay ?? 1000,
-      heartbeatInterval: config.heartbeatInterval ?? 30000,
-      reconnectOnClose: config.reconnectOnClose ?? true,
-      maxReconnectAttempts: config.maxReconnectAttempts ?? 10,
-      reconnectDelay: config.reconnectDelay ?? 5000,
-      ...config
-    };
-    this.logger = logger;
-    this.future = future;
-  }
+	constructor(config: ConnectionConfig, logger: ILogger, future: Future) {
+		super();
+		this.config = {
+			timeout: config.timeout ?? 30000,
+			retryAttempts: config.retryAttempts ?? 3,
+			retryDelay: config.retryDelay ?? 1000,
+			heartbeatInterval: config.heartbeatInterval ?? 30000,
+			reconnectOnClose: config.reconnectOnClose ?? true,
+			maxReconnectAttempts: config.maxReconnectAttempts ?? 10,
+			reconnectDelay: config.reconnectDelay ?? 5000,
+			rpc: config.rpc,
+			namespace: config.namespace,
+			database: config.database,
+			user: config.user,
+			pass: config.pass,
+		};
+		this.logger = logger;
+		this.future = future;
+	}
 
-  /**
-   * Подключение к SurrealDB
-   */
-  async connect(): Promise<void> {
-    if (this.state === ConnectionState.CONNECTED || this.state === ConnectionState.CONNECTING) {
-      return;
-    }
+	/**
+	 * Подключение к SurrealDB
+	 */
+	async connect(): Promise<void> {
+		if (
+			this.state === ConnectionState.CONNECTED ||
+			this.state === ConnectionState.CONNECTING
+		) {
+			return;
+		}
 
-    this.setState(ConnectionState.CONNECTING);
+		this.setState(ConnectionState.CONNECTING);
 
-    try {
-      await this.establishConnection();
-      await this.authenticate();
-      this.startHeartbeat();
-      this.setState(ConnectionState.CONNECTED);
-      this.emit('connected');
-    } catch (error) {
-      this.setState(ConnectionState.ERROR);
-      this.emit('error', error);
-      throw error;
-    }
-  }
+		try {
+			await this.establishConnection();
+			await this.authenticate();
+			this.startHeartbeat();
+			this.setState(ConnectionState.CONNECTED);
+			this.emit('connected');
+		} catch (error) {
+			this.setState(ConnectionState.ERROR);
+			this.emit('error', error);
+			throw error;
+		}
+	}
 
-  /**
-   * Отключение от SurrealDB
-   */
-  async disconnect(): Promise<void> {
-    this.setState(ConnectionState.DISCONNECTED);
-    this.stopHeartbeat();
-    this.clearReconnectTimer();
-    
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+	/**
+	 * Отключение от SurrealDB
+	 */
+	async disconnect(): Promise<void> {
+		this.setState(ConnectionState.DISCONNECTED);
+		this.stopHeartbeat();
+		this.clearReconnectTimer();
 
-    // Отклонение всех ожидающих сообщений
-    for (const [id, pending] of this.pendingMessages.entries()) {
-      clearTimeout(pending.timeout);
-      pending.reject(new ConnectionError('Connection closed'));
-    }
-    this.pendingMessages.clear();
+		if (this.ws) {
+			this.ws.close();
+			this.ws = null;
+		}
 
-    this.emit('disconnected');
-  }
+		// Отклонение всех ожидающих сообщений
+		for (const [id, pending] of this.pendingMessages.entries()) {
+			clearTimeout(pending.timeout);
+			pending.reject(new ConnectionError('Connection closed'));
+		}
+		this.pendingMessages.clear();
 
-  /**
-   * Отправка сообщения
-   */
-  async send<T = any>(message: any): Promise<T> {
-    if (this.state !== ConnectionState.CONNECTED) {
-      throw new ConnectionError('Not connected to database');
-    }
+		this.emit('disconnected');
+	}
 
-    return new Promise<T>((resolve, reject) => {
-      const id = this.generateMessageId();
-      const timeout = setTimeout(() => {
-        this.pendingMessages.delete(id);
-        reject(new TimeoutError('Message timeout', this.config.timeout));
-      }, this.config.timeout);
+	/**
+	 * Отправка сообщения
+	 */
+	async send<T = any>(message: any): Promise<T> {
+		if (this.state !== ConnectionState.CONNECTED) {
+			throw new ConnectionError('Not connected to database');
+		}
 
-      this.pendingMessages.set(id, { resolve, reject, timeout });
+		return new Promise<T>((resolve, reject) => {
+			const id = this.generateMessageId();
+			const timeout = setTimeout(() => {
+				this.pendingMessages.delete(id);
+				reject(
+					new TimeoutError('Message timeout', this.config.timeout)
+				);
+			}, this.config.timeout);
 
-      const messageWithId = { ...message, id };
-      
-      try {
-        this.ws!.send(JSON.stringify(messageWithId));
-      } catch (error) {
-        this.pendingMessages.delete(id);
-        clearTimeout(timeout);
-        reject(new ConnectionError('Failed to send message'));
-      }
-    });
-  }
+			this.pendingMessages.set(id, { resolve, reject, timeout });
 
-  /**
-   * Получение текущего состояния
-   */
-  getState(): ConnectionState {
-    return this.state;
-  }
+			const messageWithId = { ...message, id };
 
-  /**
-   * Проверка подключения
-   */
-  isConnected(): boolean {
-    return this.state === ConnectionState.CONNECTED;
-  }
+			try {
+				this.ws!.send(JSON.stringify(messageWithId));
+			} catch (error) {
+				this.pendingMessages.delete(id);
+				clearTimeout(timeout);
+				reject(new ConnectionError('Failed to send message'));
+			}
+		});
+	}
 
-  /**
-   * Установка соединения
-   */
-  private async establishConnection(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      try {
-        this.ws = new WebSocket(this.config.rpc);
+	/**
+	 * Получение текущего состояния
+	 */
+	getState(): ConnectionState {
+		return this.state;
+	}
 
-        const timeout = setTimeout(() => {
-          reject(new TimeoutError('Connection timeout', this.config.timeout));
-        }, this.config.timeout);
+	/**
+	 * Проверка подключения
+	 */
+	isConnected(): boolean {
+		return this.state === ConnectionState.CONNECTED;
+	}
 
-        this.ws.on('open', () => {
-          clearTimeout(timeout);
-          this.logger.info({ module: 'ConnectionManager', method: 'establishConnection' }, 'WebSocket connected');
-          resolve();
-        });
+	/**
+	 * Установка соединения
+	 */
+	private async establishConnection(): Promise<void> {
+		return new Promise((resolve, reject) => {
+			try {
+				this.ws = new WebSocket(this.config.rpc);
 
-        this.ws.on('error', (error) => {
-          clearTimeout(timeout);
-          this.logger.error({ module: 'ConnectionManager', method: 'establishConnection' }, error);
-          reject(new ConnectionError(`WebSocket error: ${error.message}`));
-        });
+				const timeout = setTimeout(() => {
+					reject(
+						new TimeoutError(
+							'Connection timeout',
+							this.config.timeout
+						)
+					);
+				}, this.config.timeout);
 
-        this.ws.on('close', (code, reason) => {
-          this.logger.warn({ module: 'ConnectionManager', method: 'establishConnection' }, 
-            `WebSocket closed: ${code} ${reason.toString()}`);
-          
-          if (this.state === ConnectionState.CONNECTED && this.config.reconnectOnClose) {
-            this.scheduleReconnect();
-          }
-        });
+				this.ws.on('open', () => {
+					clearTimeout(timeout);
+					this.logger.info(
+						{
+							module: 'ConnectionManager',
+							method: 'establishConnection',
+						},
+						'WebSocket connected'
+					);
+					resolve();
+				});
 
-        this.ws.on('message', (data) => {
-          try {
-            const message = JSON.parse(data.toString());
-            this.handleMessage(message);
-          } catch (error) {
-            this.logger.error({ module: 'ConnectionManager', method: 'establishConnection' }, 
-              'Failed to parse message', error);
-          }
-        });
+				this.ws.on('error', (error) => {
+					clearTimeout(timeout);
+					this.logger.error(
+						{
+							module: 'ConnectionManager',
+							method: 'establishConnection',
+						},
+						error
+					);
+					reject(
+						new ConnectionError(`WebSocket error: ${error.message}`)
+					);
+				});
 
-      } catch (error) {
-        reject(new ConnectionError(`Failed to create WebSocket: ${error instanceof Error ? error.message : 'Unknown error'}`));
-      }
-    });
-  }
+				this.ws.on('close', (code, reason) => {
+					this.logger.warn(
+						{
+							module: 'ConnectionManager',
+							method: 'establishConnection',
+						},
+						`WebSocket closed: ${code} ${reason.toString()}`
+					);
 
-  /**
-   * Аутентификация
-   */
-  private async authenticate(): Promise<void> {
-    this.setState(ConnectionState.AUTHENTICATING);
+					if (
+						this.state === ConnectionState.CONNECTED &&
+						this.config.reconnectOnClose
+					) {
+						this.scheduleReconnect();
+					}
+				});
 
-    try {
-      // Signin
-      await this.send({
-        method: 'signin',
-        params: [{
-          user: this.config.user,
-          pass: this.config.pass
-        }]
-      });
+				this.ws.on('message', (data) => {
+					try {
+						const message = JSON.parse(data.toString());
+						this.handleMessage(message);
+					} catch (error) {
+						this.logger.error(
+							{
+								module: 'ConnectionManager',
+								method: 'establishConnection',
+							},
+							`Failed to parse message: ${error instanceof Error ? error.message : 'Unknown error'}`
+						);
+					}
+				});
+			} catch (error) {
+				reject(
+					new ConnectionError(
+						`Failed to create WebSocket: ${error instanceof Error ? error.message : 'Unknown error'}`
+					)
+				);
+			}
+		});
+	}
 
-      // Use namespace and database
-      await this.send({
-        method: 'use',
-        params: [this.config.namespace, this.config.database]
-      });
+	/**
+	 * Аутентификация
+	 */
+	private async authenticate(): Promise<void> {
+		this.setState(ConnectionState.AUTHENTICATING);
 
-      this.setState(ConnectionState.AUTHENTICATED);
-      this.logger.info({ module: 'ConnectionManager', method: 'authenticate' }, 'Authentication successful');
+		try {
+			// Signin
+			await this.send({
+				method: 'signin',
+				params: [
+					{
+						user: this.config.user,
+						pass: this.config.pass,
+					},
+				],
+			});
 
-    } catch (error) {
-      throw new AuthenticationError(`Authentication failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
+			// Use namespace and database
+			await this.send({
+				method: 'use',
+				params: [this.config.namespace, this.config.database],
+			});
 
-  /**
-   * Обработка входящих сообщений
-   */
-  private handleMessage(message: any): void {
-    this.emit('message', message);
+			this.setState(ConnectionState.AUTHENTICATED);
+			this.logger.info(
+				{ module: 'ConnectionManager', method: 'authenticate' },
+				'Authentication successful'
+			);
+		} catch (error) {
+			throw new AuthenticationError(
+				`Authentication failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+			);
+		}
+	}
 
-    // Обработка ответов на запросы
-    if (message.id && this.pendingMessages.has(message.id)) {
-      const pending = this.pendingMessages.get(message.id)!;
-      clearTimeout(pending.timeout);
-      this.pendingMessages.delete(message.id);
+	/**
+	 * Обработка входящих сообщений
+	 */
+	private handleMessage(message: any): void {
+		this.emit('message', message);
 
-      if (message.error) {
-        pending.reject(new ConnectionError(message.error.message || 'Unknown error'));
-      } else {
-        pending.resolve(message.result);
-      }
-    }
+		// Обработка ответов на запросы
+		if (message.id && this.pendingMessages.has(message.id)) {
+			const pending = this.pendingMessages.get(message.id)!;
+			clearTimeout(pending.timeout);
+			this.pendingMessages.delete(message.id);
 
-    // Обработка live query уведомлений
-    if (message.result && message.result.action) {
-      this.emit('liveQuery', message.result);
-    }
-  }
+			if (message.error) {
+				pending.reject(
+					new ConnectionError(
+						message.error.message || 'Unknown error'
+					)
+				);
+			} else {
+				pending.resolve(message.result);
+			}
+		}
 
-  /**
-   * Запуск heartbeat
-   */
-  private startHeartbeat(): void {
-    this.stopHeartbeat();
-    
-    this.heartbeatTimer = setInterval(async () => {
-      try {
-        await this.send({ method: 'ping', params: [] });
-        this.emit('heartbeat');
-      } catch (error) {
-        this.logger.warn({ module: 'ConnectionManager', method: 'startHeartbeat' }, 
-          'Heartbeat failed', error);
-        
-        if (this.config.reconnectOnClose) {
-          this.scheduleReconnect();
-        }
-      }
-    }, this.config.heartbeatInterval);
-  }
+		// Обработка live query уведомлений
+		if (message.result && message.result.action) {
+			this.emit('liveQuery', message.result);
+		}
+	}
 
-  /**
-   * Остановка heartbeat
-   */
-  private stopHeartbeat(): void {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
-    }
-  }
+	/**
+	 * Запуск heartbeat
+	 */
+	private startHeartbeat(): void {
+		this.stopHeartbeat();
 
-  /**
-   * Планирование переподключения
-   */
-  private scheduleReconnect(): void {
-    if (this.reconnectAttempts >= this.config.maxReconnectAttempts) {
-      this.logger.error({ module: 'ConnectionManager', method: 'scheduleReconnect' }, 
-        'Max reconnect attempts reached');
-      return;
-    }
+		this.heartbeatTimer = setInterval(async () => {
+			try {
+				await this.send({ method: 'ping', params: [] });
+				this.emit('heartbeat');
+			} catch (error) {
+				this.logger.warn(
+					{ module: 'ConnectionManager', method: 'startHeartbeat' },
+					`Heartbeat failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+				);
 
-    this.clearReconnectTimer();
-    this.reconnectAttempts++;
+				if (this.config.reconnectOnClose) {
+					this.scheduleReconnect();
+				}
+			}
+		}, this.config.heartbeatInterval);
+	}
 
-    this.logger.info({ module: 'ConnectionManager', method: 'scheduleReconnect' }, 
-      `Scheduling reconnect attempt ${this.reconnectAttempts}/${this.config.maxReconnectAttempts}`);
+	/**
+	 * Остановка heartbeat
+	 */
+	private stopHeartbeat(): void {
+		if (this.heartbeatTimer) {
+			clearInterval(this.heartbeatTimer);
+			this.heartbeatTimer = null;
+		}
+	}
 
-    this.reconnectTimer = setTimeout(async () => {
-      try {
-        await this.connect();
-        this.reconnectAttempts = 0; // Сброс счетчика при успешном подключении
-      } catch (error) {
-        this.logger.error({ module: 'ConnectionManager', method: 'scheduleReconnect' }, 
-          'Reconnect failed', error);
-        this.scheduleReconnect();
-      }
-    }, this.config.reconnectDelay);
-  }
+	/**
+	 * Планирование переподключения
+	 */
+	private scheduleReconnect(): void {
+		if (this.reconnectAttempts >= this.config.maxReconnectAttempts) {
+			this.logger.error(
+				{ module: 'ConnectionManager', method: 'scheduleReconnect' },
+				'Max reconnect attempts reached'
+			);
+			return;
+		}
 
-  /**
-   * Очистка таймера переподключения
-   */
-  private clearReconnectTimer(): void {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-  }
+		this.clearReconnectTimer();
+		this.reconnectAttempts++;
 
-  /**
-   * Установка состояния
-   */
-  private setState(newState: ConnectionState): void {
-    const previousState = this.state;
-    this.state = newState;
-    this.emit('stateChange', newState, previousState);
-  }
+		this.logger.info(
+			{ module: 'ConnectionManager', method: 'scheduleReconnect' },
+			`Scheduling reconnect attempt ${this.reconnectAttempts}/${this.config.maxReconnectAttempts}`
+		);
 
-  /**
-   * Генерация ID сообщения
-   */
-  private generateMessageId(): string {
-    return Math.random().toString(36).substring(2, 15) + 
-           Math.random().toString(36).substring(2, 15);
-  }
+		this.reconnectTimer = setTimeout(async () => {
+			try {
+				await this.connect();
+				this.reconnectAttempts = 0; // Сброс счетчика при успешном подключении
+			} catch (error) {
+				this.logger.error(
+					{
+						module: 'ConnectionManager',
+						method: 'scheduleReconnect',
+					},
+					`Reconnect failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+				);
+				this.scheduleReconnect();
+			}
+		}, this.config.reconnectDelay);
+	}
 
-  /**
-   * Получение статистики подключения
-   */
-  getStats() {
-    return {
-      state: this.state,
-      reconnectAttempts: this.reconnectAttempts,
-      pendingMessages: this.pendingMessages.size,
-      queuedMessages: this.messageQueue.length,
-      isConnected: this.isConnected()
-    };
-  }
+	/**
+	 * Очистка таймера переподключения
+	 */
+	private clearReconnectTimer(): void {
+		if (this.reconnectTimer) {
+			clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
+		}
+	}
+
+	/**
+	 * Установка состояния
+	 */
+	private setState(newState: ConnectionState): void {
+		const previousState = this.state;
+		this.state = newState;
+		this.emit('stateChange', newState, previousState);
+	}
+
+	/**
+	 * Генерация ID сообщения
+	 */
+	private generateMessageId(): string {
+		return (
+			Math.random().toString(36).substring(2, 15) +
+			Math.random().toString(36).substring(2, 15)
+		);
+	}
+
+	/**
+	 * Получение статистики подключения
+	 */
+	getStats() {
+		return {
+			state: this.state,
+			reconnectAttempts: this.reconnectAttempts,
+			pendingMessages: this.pendingMessages.size,
+			queuedMessages: this.messageQueue.length,
+			isConnected: this.isConnected(),
+		};
+	}
 }
 
 // Пул подключений
 export class ConnectionPool {
-  private connections: ConnectionManager[] = [];
-  private config: ConnectionConfig;
-  private logger: ILogger;
-  private future: Future;
-  private currentIndex = 0;
+	private connections: ConnectionManager[] = [];
+	private config: ConnectionConfig;
+	private logger: ILogger;
+	private future: Future;
+	private currentIndex = 0;
 
-  constructor(
-    config: ConnectionConfig,
-    logger: ILogger,
-    future: Future,
-    poolSize = 5
-  ) {
-    this.config = config;
-    this.logger = logger;
-    this.future = future;
+	constructor(
+		config: ConnectionConfig,
+		logger: ILogger,
+		future: Future,
+		poolSize = 5
+	) {
+		this.config = config;
+		this.logger = logger;
+		this.future = future;
 
-    // Создание пула подключений
-    for (let i = 0; i < poolSize; i++) {
-      const connection = new ConnectionManager(config, logger, future);
-      this.connections.push(connection);
-    }
-  }
+		// Создание пула подключений
+		for (let i = 0; i < poolSize; i++) {
+			const connection = new ConnectionManager(config, logger, future);
+			this.connections.push(connection);
+		}
+	}
 
-  /**
-   * Инициализация пула
-   */
-  async initialize(): Promise<void> {
-    await Promise.all(
-      this.connections.map(conn => conn.connect())
-    );
-  }
+	/**
+	 * Инициализация пула
+	 */
+	async initialize(): Promise<void> {
+		await Promise.all(this.connections.map((conn) => conn.connect()));
+	}
 
-  /**
-   * Получение подключения (round-robin)
-   */
-  getConnection(): ConnectionManager {
-    const connection = this.connections[this.currentIndex];
-    this.currentIndex = (this.currentIndex + 1) % this.connections.length;
-    return connection;
-  }
+	/**
+	 * Получение подключения (round-robin)
+	 */
+	getConnection(): ConnectionManager {
+		const connection = this.connections[this.currentIndex];
+		this.currentIndex = (this.currentIndex + 1) % this.connections.length;
+		return connection;
+	}
 
-  /**
-   * Получение всех подключений
-   */
-  getAllConnections(): ConnectionManager[] {
-    return [...this.connections];
-  }
+	/**
+	 * Получение всех подключений
+	 */
+	getAllConnections(): ConnectionManager[] {
+		return [...this.connections];
+	}
 
-  /**
-   * Закрытие пула
-   */
-  async close(): Promise<void> {
-    await Promise.all(
-      this.connections.map(conn => conn.disconnect())
-    );
-  }
+	/**
+	 * Закрытие пула
+	 */
+	async close(): Promise<void> {
+		await Promise.all(this.connections.map((conn) => conn.disconnect()));
+	}
 
-  /**
-   * Статистика пула
-   */
-  getStats() {
-    return {
-      size: this.connections.length,
-      connected: this.connections.filter(conn => conn.isConnected()).length,
-      currentIndex: this.currentIndex,
-      connections: this.connections.map(conn => conn.getStats())
-    };
-  }
+	/**
+	 * Статистика пула
+	 */
+	getStats() {
+		return {
+			size: this.connections.length,
+			connected: this.connections.filter((conn) => conn.isConnected())
+				.length,
+			currentIndex: this.currentIndex,
+			connections: this.connections.map((conn) => conn.getStats()),
+		};
+	}
 }
-
-// Экспорт
-export {
-  ConnectionState,
-  ConnectionConfig,
-  ConnectionEvents,
-  ConnectionManager,
-  ConnectionPool
-};
