@@ -2,7 +2,7 @@
  * Система ошибок для SurrealDB ORM
  */
 
-import type { ValidationError } from '../types/validation.js';
+import type { ValidationError as ValidationErrorType } from '../types/validation.js';
 
 // Базовый класс ошибки ORM
 export abstract class SurrealORMError extends Error {
@@ -43,11 +43,11 @@ export abstract class SurrealORMError extends Error {
 export class ValidationError extends SurrealORMError {
   readonly code = 'VALIDATION_ERROR';
   readonly statusCode = 400;
-  readonly validationErrors: ValidationError[];
+  readonly validationErrors: ValidationErrorType[];
 
   constructor(
     message: string,
-    validationErrors: ValidationError[],
+    validationErrors: ValidationErrorType[],
     context?: Record<string, unknown>
   ) {
     super(message, context);

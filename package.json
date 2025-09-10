@@ -53,8 +53,7 @@
 	},
 	"homepage": "https://github.com/FrankFMY/surrealdb-orm-enhanced#readme",
 	"dependencies": {
-		"ws": "^8.14.2",
-		"crypto": "^1.0.1"
+		"ws": "^8.14.2"
 	},
 	"devDependencies": {
 		"@types/node": "^20.10.0",
